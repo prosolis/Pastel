@@ -6,6 +6,7 @@ import signal
 import sys
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from dotenv import load_dotenv
 
 from .bot import DealsBot
 from .config import Config
@@ -21,6 +22,7 @@ def setup_logging():
 
 
 async def main():
+    load_dotenv()
     setup_logging()
     logger = logging.getLogger("gaming_deals_bot")
 
