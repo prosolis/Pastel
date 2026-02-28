@@ -53,7 +53,13 @@ class DealsBot:
         await self.db.close()
 
     async def _populate_initial_state(self):
-        """Fetch current deals and record them without posting (avoids spam on first run)."""
+        """Fetch current CheapShark deals and record them without posting (avoids spam on first run).
+
+        Epic free games are intentionally *not* recorded here so that the
+        subsequent ``check_epic_free_games`` call will post them.  There are
+        only a handful at any time and they are time-limited, so users should
+        see them immediately rather than waiting for the next cycle.
+        """
         deals = await fetch_deals(
             self._http,
             max_price=self.config.max_price_usd,
@@ -63,14 +69,7 @@ class DealsBot:
         for deal in deals:
             await self.db.mark_posted(deal.dedup_id, "cheapshark", deal.title)
 
-        current_free, upcoming = await fetch_free_games(self._http)
-        for game in current_free:
-            await self.db.mark_posted(game.dedup_id, "epic", game.title)
-        for game in upcoming:
-            await self.db.mark_posted(game.dedup_id, "epic", game.title)
-
-        total = len(deals) + len(current_free) + len(upcoming)
-        logger.info("First run: recorded %d existing deals/games", total)
+        logger.info("First run: recorded %d existing CheapShark deals", len(deals))
 
     async def send_intro(self):
         """Send an intro message to the Matrix room if configured."""
