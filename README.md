@@ -27,6 +27,28 @@ pip install -r requirements.txt
 python -m gaming_deals_bot
 ```
 
+## Obtaining a Matrix Bot Access Token
+
+1. **Create a bot account** on your homeserver (e.g. via Element: register a new account like `@dealsbot:example.com`).
+
+2. **Log in and get the access token** using `curl`:
+
+   ```bash
+   curl -XPOST "https://matrix.example.com/_matrix/client/v3/login" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "type": "m.login.password",
+       "identifier": { "type": "m.id.user", "user": "dealsbot" },
+       "password": "YOUR_PASSWORD"
+     }'
+   ```
+
+   The response will contain an `access_token` field — copy that value into your `.env` as `MATRIX_BOT_ACCESS_TOKEN`.
+
+3. **Invite the bot** to your deals room, then have the bot **accept the invite** (the bot does this automatically on startup).
+
+> **Tip:** After extracting the token you can change the bot account's password without invalidating the token. Store the token securely — anyone with it can act as the bot.
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`):
