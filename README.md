@@ -60,7 +60,7 @@ All configuration is via environment variables (see `.env.example`):
 | `MATRIX_BOT_ACCESS_TOKEN` | Yes | — | Bot's access token |
 | `MATRIX_DEALS_ROOM_ID` | Yes | — | Room ID to post deals in |
 | `ITAD_API_KEY` | No | — | IsThereAnyDeal API key for historical low detection |
-| `MIN_DEAL_RATING` | No | 80 | Minimum CheapShark deal rating (0-100) |
+| `MIN_DEAL_RATING` | No | 8.0 | Minimum CheapShark deal rating (0-10) |
 | `MIN_DISCOUNT_PERCENT` | No | 50 | Minimum discount percentage |
 | `MAX_PRICE_USD` | No | 20 | Maximum sale price in USD |
 | `DATABASE_PATH` | No | deals.db | Path to SQLite database file |

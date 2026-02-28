@@ -75,7 +75,7 @@ async def fetch_deals(
 
         if savings < min_discount:
             continue
-        if rating * 10 < min_rating:  # dealRating is 0-10, config is 0-100
+        if rating < min_rating:
             continue
 
         steam_app_id = d.get("steamAppID") or None
