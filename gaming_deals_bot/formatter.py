@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import markdown
 
 from .cheapshark import CheapSharkDeal
+from .currency import format_price
 from .epic import EpicFreeGame
 
 _md = markdown.Markdown()
@@ -25,9 +26,16 @@ def format_deal(deal: CheapSharkDeal, is_historical_low: bool = False) -> tuple[
     Returns (body, formatted_body).
     """
     discount = int(deal.savings)
+    sale_price = float(deal.sale_price)
+    normal_price = float(deal.normal_price)
+
+    sale_multi = format_price(sale_price)
+    normal_display = format_price(normal_price)
+
     lines = [
         f"**🎮 [DEAL] {deal.title}**",
-        f"> {discount}% off — **${deal.sale_price}** on {deal.store_name} ~~${deal.normal_price}~~",
+        f"> {discount}% off on {deal.store_name} ~~{normal_display}~~",
+        f"> 💰 **{sale_multi}**",
     ]
 
     if is_historical_low:
@@ -41,7 +49,8 @@ def format_deal(deal: CheapSharkDeal, is_historical_low: bool = False) -> tuple[
     # Plain text fallback — strip markdown syntax
     plain_lines = [
         f"🎮 [DEAL] {deal.title}",
-        f"  {discount}% off — ${deal.sale_price} on {deal.store_name} (was ${deal.normal_price})",
+        f"  {discount}% off on {deal.store_name} (was {normal_display})",
+        f"  💰 {sale_multi}",
     ]
     if is_historical_low:
         plain_lines.append("  🏆 All-time low!")
