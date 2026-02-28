@@ -19,6 +19,11 @@ class Config:
         self.min_discount_percent = int(os.environ.get("MIN_DISCOUNT_PERCENT", "50"))
         self.max_price_usd = float(os.environ.get("MAX_PRICE_USD", "20"))
 
+        # Intro message on startup
+        self.send_intro_message = os.environ.get(
+            "SEND_INTRO_MESSAGE", "false"
+        ).lower() in ("true", "1", "yes")
+
         # Database
         self.database_path = os.environ.get("DATABASE_PATH", "deals.db")
 

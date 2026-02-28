@@ -47,5 +47,26 @@ class MatrixDealsClient:
             logger.error("Matrix send error: %s", exc)
             return False
 
+    async def send_notice(self, text: str) -> bool:
+        """Send a plain m.notice (non-highlight) message to the configured room."""
+        content = {
+            "msgtype": "m.notice",
+            "body": text,
+        }
+
+        try:
+            resp = await self._client.room_send(
+                room_id=self.room_id,
+                message_type="m.room.message",
+                content=content,
+            )
+            if isinstance(resp, RoomSendError):
+                logger.error("Failed to send notice: %s", resp.message)
+                return False
+            return True
+        except Exception as exc:
+            logger.error("Matrix send error: %s", exc)
+            return False
+
     async def close(self):
         await self._client.close()
