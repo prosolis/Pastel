@@ -47,6 +47,9 @@ class DealsBot:
         else:
             self._first_run_done = True
 
+        # Start presence heartbeat so the bot shows as "online"
+        await self.matrix.start_presence_heartbeat()
+
     async def stop(self):
         """Clean shutdown."""
         await self._http.aclose()
