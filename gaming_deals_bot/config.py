@@ -20,10 +20,47 @@ class Config:
             s.strip().lower() for s in raw_sources.split(",") if s.strip()
         ]
 
-        # Deal filtering
-        self.min_deal_rating = float(os.environ.get("MIN_DEAL_RATING", "8.0"))
-        self.min_discount_percent = int(os.environ.get("MIN_DISCOUNT_PERCENT", "50"))
-        self.max_price_usd = float(os.environ.get("MAX_PRICE_USD", "20"))
+        # ITAD countries: comma-separated ISO 3166-1 alpha-2 country codes
+        # Deals are fetched for each country and merged (first country has priority
+        # when the same game appears in multiple regions).
+        raw_countries = os.environ.get("ITAD_COUNTRIES", "US")
+        self.itad_countries: list[str] = [
+            c.strip().upper() for c in raw_countries.split(",") if c.strip()
+        ]
+
+        # Currency display
+        self.default_currency = os.environ.get("DEFAULT_CURRENCY", "USD").upper()
+        raw_extra = os.environ.get("EXTRA_CURRENCIES", "CAD,EUR,GBP")
+        self.extra_currencies: list[str] = [
+            c.strip().upper() for c in raw_extra.split(",") if c.strip()
+        ]
+
+        # Shared filter fallbacks (support legacy env vars)
+        _max_price = os.environ.get(
+            "MAX_PRICE", os.environ.get("MAX_PRICE_USD", "20")
+        )
+        _min_discount = os.environ.get("MIN_DISCOUNT_PERCENT", "50")
+        _min_rating = os.environ.get("MIN_DEAL_RATING", "8.0")
+
+        # CheapShark-specific filtering (falls back to shared values)
+        self.cheapshark_min_discount = int(
+            os.environ.get("CHEAPSHARK_MIN_DISCOUNT", _min_discount)
+        )
+        self.cheapshark_min_rating = float(
+            os.environ.get("CHEAPSHARK_MIN_RATING", _min_rating)
+        )
+        self.cheapshark_max_price = float(
+            os.environ.get("CHEAPSHARK_MAX_PRICE", _max_price)
+        )
+
+        # ITAD-specific filtering (falls back to shared values)
+        self.itad_min_discount = int(
+            os.environ.get("ITAD_MIN_DISCOUNT", _min_discount)
+        )
+        self.itad_max_price = float(
+            os.environ.get("ITAD_MAX_PRICE", _max_price)
+        )
+        self.itad_deals_limit = int(os.environ.get("ITAD_DEALS_LIMIT", "200"))
 
         # Intro message on startup
         self.send_intro_message = os.environ.get(

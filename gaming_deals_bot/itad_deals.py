@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .currency import convert_to_usd
 from .itad import BASE_URL
 
 logger = logging.getLogger(__name__)
@@ -18,8 +19,8 @@ class ITADDeal:
     game_id: str  # ITAD UUID
     slug: str
     title: str
-    sale_price: float  # current deal price
-    normal_price: float  # regular (non-sale) price
+    sale_price: float  # current deal price (normalised to USD)
+    normal_price: float  # regular (non-sale) price (normalised to USD)
     discount: int  # percentage off (0-100)
     currency: str
     shop_name: str
@@ -46,19 +47,75 @@ async def fetch_deals(
     client: httpx.AsyncClient,
     api_key: str,
     *,
+    countries: list[str] | None = None,
     max_price: float = 20,
     min_discount: float = 50,
-    limit: int = 20,
+    limit: int = 200,
 ) -> list[ITADDeal]:
-    """Fetch current deals from IsThereAnyDeal.
+    """Fetch current deals from IsThereAnyDeal across one or more countries.
 
-    Uses GET /deals/v2 with sorting by highest discount.
+    Defaults to the API maximum of 200 deals per country so that client-side
+    filtering (discount, price, type) has the widest possible pool to work
+    with — this avoids missing deals that wouldn't appear in a smaller window
+    sorted only by discount.
+
+    Deals are fetched per-country, merged (first country in the list wins
+    when the same game+shop appears in multiple regions), and finally sorted
+    by timestamp so that the newest deals appear first.
     """
     if not api_key:
         return []
 
+    if countries is None:
+        countries = ["US"]
+
+    seen: set[str] = set()  # game_id-shop_id keys for cross-country dedup
+    all_deals: list[ITADDeal] = []
+
+    for country in countries:
+        country_deals = await _fetch_country_deals(
+            client,
+            api_key,
+            country=country,
+            max_price=max_price,
+            min_discount=min_discount,
+            limit=limit,
+        )
+        for deal in country_deals:
+            key = f"{deal.game_id}-{deal.shop_id}"
+            if key not in seen:
+                seen.add(key)
+                all_deals.append(deal)
+            else:
+                logger.debug(
+                    "Skipping duplicate %s from country %s", deal.title, country
+                )
+
+    # Sort newest first — the API only supports sorting by discount or price,
+    # so we sort client-side by the deal timestamp.
+    all_deals.sort(key=lambda d: d.timestamp, reverse=True)
+
+    logger.info(
+        "ITAD: %d deals across %d country/countries after dedup",
+        len(all_deals),
+        len(countries),
+    )
+    return all_deals
+
+
+async def _fetch_country_deals(
+    client: httpx.AsyncClient,
+    api_key: str,
+    *,
+    country: str = "US",
+    max_price: float = 20,
+    min_discount: float = 50,
+    limit: int = 200,
+) -> list[ITADDeal]:
+    """Fetch deals for a single country from the ITAD ``/deals/v2`` endpoint."""
     params: dict = {
         "key": api_key,
+        "country": country,
         "sort": "-cut",
         "limit": min(limit, 200),
         "nondeals": "false",
@@ -69,11 +126,13 @@ async def fetch_deals(
         resp.raise_for_status()
         data = resp.json()
     except (httpx.HTTPError, ValueError) as exc:
-        logger.error("ITAD deals API error: %s", exc)
+        logger.error("ITAD deals API error for country %s: %s", country, exc)
         return []
 
     raw_list = data.get("list", [])
-    logger.info("ITAD returned %d raw deals (before filtering)", len(raw_list))
+    logger.info(
+        "ITAD returned %d raw deals for %s (before filtering)", len(raw_list), country
+    )
 
     deals: list[ITADDeal] = []
     for entry in raw_list:
@@ -94,15 +153,22 @@ async def fetch_deals(
         regular_amount = deal_data.get("regular", {}).get("amount", 0)
         currency = deal_data.get("price", {}).get("currency", "USD")
 
-        # Apply filters
+        # Normalise to USD so prices are comparable across regions
+        price_usd = convert_to_usd(price_amount, currency)
+        regular_usd = convert_to_usd(regular_amount, currency)
+
+        # Apply ITAD-specific filters
         if cut < min_discount:
             logger.debug(
-                "Filtered out %s: discount %d%% < %d%%", title, cut, int(min_discount)
+                "Filtered out %s: discount %d%% < %d%%",
+                title,
+                cut,
+                int(min_discount),
             )
             continue
-        if price_amount > max_price:
+        if price_usd > max_price:
             logger.debug(
-                "Filtered out %s: price %.2f > %.2f", title, price_amount, max_price
+                "Filtered out %s: price $%.2f > $%.2f", title, price_usd, max_price
             )
             continue
 
@@ -116,10 +182,10 @@ async def fetch_deals(
                 game_id=entry.get("id", ""),
                 slug=entry.get("slug", ""),
                 title=title,
-                sale_price=price_amount,
-                normal_price=regular_amount,
+                sale_price=price_usd,
+                normal_price=regular_usd,
                 discount=cut,
-                currency=currency,
+                currency="USD",  # normalised
                 shop_name=shop.get("name", "Unknown"),
                 shop_id=shop.get("id", 0),
                 url=deal_data.get("url", ""),
@@ -129,5 +195,7 @@ async def fetch_deals(
             )
         )
 
-    logger.info("ITAD returned %d deals after filtering", len(deals))
+    logger.info(
+        "ITAD returned %d deals for %s after filtering", len(deals), country
+    )
     return deals

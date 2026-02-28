@@ -7,7 +7,7 @@ import httpx
 
 from .cheapshark import CheapSharkDeal, fetch_deals as fetch_cheapshark_deals
 from .config import Config
-from .currency import refresh_rates
+from .currency import configure as configure_currency, refresh_rates
 from .database import Database
 from .epic import EpicFreeGame, fetch_free_games
 from .formatter import format_deal, format_epic_free, format_epic_upcoming, format_itad_deal
@@ -34,6 +34,9 @@ class DealsBot:
     async def start(self):
         """Initialize database, fetch exchange rates, and run first-run population."""
         await self.db.connect()
+
+        # Configure currency display before fetching rates
+        configure_currency(self.config.default_currency, self.config.extra_currencies)
 
         # Pre-fetch exchange rates so the first deal post has conversions
         await refresh_rates(self._http)
@@ -69,9 +72,9 @@ class DealsBot:
         if "cheapshark" in self.config.deal_sources:
             deals = await fetch_cheapshark_deals(
                 self._http,
-                max_price=self.config.max_price_usd,
-                min_rating=self.config.min_deal_rating,
-                min_discount=self.config.min_discount_percent,
+                max_price=self.config.cheapshark_max_price,
+                min_rating=self.config.cheapshark_min_rating,
+                min_discount=self.config.cheapshark_min_discount,
             )
             for deal in deals:
                 await self.db.mark_posted(deal.dedup_id, "cheapshark", deal.title)
@@ -81,8 +84,10 @@ class DealsBot:
             itad_deals = await fetch_itad_deals(
                 self._http,
                 self.config.itad_api_key,
-                max_price=self.config.max_price_usd,
-                min_discount=self.config.min_discount_percent,
+                countries=self.config.itad_countries,
+                max_price=self.config.itad_max_price,
+                min_discount=self.config.itad_min_discount,
+                limit=self.config.itad_deals_limit,
             )
             for deal in itad_deals:
                 await self.db.mark_posted(deal.dedup_id, "itad", deal.title)
@@ -106,9 +111,9 @@ class DealsBot:
         logger.info("Checking CheapShark for deals...")
         deals = await fetch_cheapshark_deals(
             self._http,
-            max_price=self.config.max_price_usd,
-            min_rating=self.config.min_deal_rating,
-            min_discount=self.config.min_discount_percent,
+            max_price=self.config.cheapshark_max_price,
+            min_rating=self.config.cheapshark_min_rating,
+            min_discount=self.config.cheapshark_min_discount,
         )
 
         for deal in deals:
@@ -131,8 +136,10 @@ class DealsBot:
         deals = await fetch_itad_deals(
             self._http,
             self.config.itad_api_key,
-            max_price=self.config.max_price_usd,
-            min_discount=self.config.min_discount_percent,
+            countries=self.config.itad_countries,
+            max_price=self.config.itad_max_price,
+            min_discount=self.config.itad_min_discount,
+            limit=self.config.itad_deals_limit,
         )
 
         for deal in deals:

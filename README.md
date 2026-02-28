@@ -55,6 +55,8 @@ python -m gaming_deals_bot
 
 All configuration is via environment variables (see `.env.example`):
 
+### Core
+
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `MATRIX_HOMESERVER_URL` | Yes | — | Matrix homeserver URL |
@@ -63,11 +65,26 @@ All configuration is via environment variables (see `.env.example`):
 | `MATRIX_DEALS_ROOM_ID` | Yes | — | Room ID to post deals in |
 | `ITAD_API_KEY` | No | — | IsThereAnyDeal API key (required when `itad` is in `DEAL_SOURCES`, optional otherwise for historical low detection) |
 | `DEAL_SOURCES` | No | cheapshark | Comma-separated deal sources: `cheapshark`, `itad`, or `cheapshark,itad` |
-| `MIN_DEAL_RATING` | No | 8.0 | Minimum CheapShark deal rating (0-10) |
-| `MIN_DISCOUNT_PERCENT` | No | 50 | Minimum discount percentage |
-| `MAX_PRICE_USD` | No | 20 | Maximum sale price in USD |
+| `ITAD_COUNTRIES` | No | US | Comma-separated ISO 3166-1 alpha-2 country codes to fetch ITAD deals from (e.g. `US,CA,GB,DE`) |
+| `DEFAULT_CURRENCY` | No | USD | Primary display currency shown first in price strings |
+| `EXTRA_CURRENCIES` | No | CAD,EUR,GBP | Additional currencies shown after the default (comma-separated) |
 | `SEND_INTRO_MESSAGE` | No | false | Send "The deals must flow." to the room on startup |
 | `DATABASE_PATH` | No | deals.db | Path to SQLite database file |
+
+### Filtering
+
+Each deal source has its own filter settings. Source-specific values take priority; when not set they fall back to the shared defaults.
+
+| Variable | Source | Default | Description |
+|---|---|---|---|
+| `CHEAPSHARK_MIN_DISCOUNT` | CheapShark | 50 | Minimum discount percentage |
+| `CHEAPSHARK_MIN_RATING` | CheapShark | 8.0 | Minimum deal rating (0-10, 0 = unrated allowed) |
+| `CHEAPSHARK_MAX_PRICE` | CheapShark | 20 | Maximum sale price (USD) |
+| `ITAD_MIN_DISCOUNT` | ITAD | 50 | Minimum discount percentage |
+| `ITAD_MAX_PRICE` | ITAD | 20 | Maximum sale price (USD, prices from other regions are converted) |
+| `ITAD_DEALS_LIMIT` | ITAD | 200 | Number of deals to fetch per country (max 200) |
+| `MIN_DISCOUNT_PERCENT` | Shared | 50 | Fallback minimum discount when source-specific value is not set |
+| `MAX_PRICE` | Shared | 20 | Fallback maximum price when source-specific value is not set |
 
 ## Preflight Check
 
@@ -93,4 +110,5 @@ The command exits with code 0 on success and 1 on failure, so it works in CI and
 - **Deduplication**: deals are tracked by game ID + timestamp; duplicates are never reposted
 - **Pruning**: deals older than 30 days are pruned from the database so they can be reposted if they return
 - **One message per deal**: each deal is posted individually so messages are independently linkable and dismissible
-- **Multi-currency pricing**: deal prices are shown in USD, CAD, EUR, and GBP using live exchange rates from the [Frankfurter API](https://api.frankfurter.dev) (ECB data, no API key required). Rates are cached and refreshed twice daily.
+- **Multi-currency pricing**: deal prices are shown in your configured currencies (default: USD, CAD, EUR, GBP) using live exchange rates from the [Frankfurter API](https://api.frankfurter.dev) (ECB data, no API key required). Set `DEFAULT_CURRENCY` to change the primary display currency and `EXTRA_CURRENCIES` for additional ones. Rates are cached and refreshed twice daily.
+- **Multi-country ITAD deals**: when using IsThereAnyDeal, deals can be fetched from multiple countries simultaneously via `ITAD_COUNTRIES` (e.g. `US,CA,GB,DE`). Deals are merged and deduplicated, with the first country in the list taking priority for duplicate games.

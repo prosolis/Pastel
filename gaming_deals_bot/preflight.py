@@ -8,7 +8,7 @@ from nio import AsyncClient, LoginError, RoomResolveAliasError
 
 from .config import Config
 from .cheapshark import BASE_URL as CHEAPSHARK_URL
-from .currency import FRANKFURTER_URL, TARGET_CURRENCIES
+from .currency import FRANKFURTER_URL, configure as configure_currency, _all_target_currencies
 from .epic import FREE_GAMES_URL
 from .itad import BASE_URL as ITAD_URL
 
@@ -45,6 +45,9 @@ async def run_preflight(config: Config) -> bool:
     print(f"\n{_BOLD}Pastel — preflight checks{_RESET}\n")
     all_ok = True
 
+    # Configure currency display so the Frankfurter check fetches the right symbols
+    configure_currency(config.default_currency, config.extra_currencies)
+
     async with httpx.AsyncClient(timeout=15) as http:
         # --- Matrix ---
         print(f"{_BOLD}Matrix{_RESET}")
@@ -63,7 +66,7 @@ async def run_preflight(config: Config) -> bool:
 
         # --- Frankfurter (exchange rates) ---
         print(f"\n{_BOLD}Frankfurter (exchange rates){_RESET}")
-        all_ok &= await _check_frankfurter(http)
+        all_ok &= await _check_frankfurter(http, config)
 
         # --- IsThereAnyDeal ---
         itad_required = "itad" in config.deal_sources
@@ -153,10 +156,16 @@ async def _check_epic(http: httpx.AsyncClient) -> bool:
         return _fail("API reachable", str(exc))
 
 
-async def _check_frankfurter(http: httpx.AsyncClient) -> bool:
+async def _check_frankfurter(http: httpx.AsyncClient, config: Config) -> bool:
     """Fetch exchange rates to confirm Frankfurter is reachable."""
+    needed = _all_target_currencies()
+    if not needed:
+        return _pass(
+            "Skipped",
+            f"only {config.default_currency} configured — no conversion needed",
+        )
     try:
-        symbols = ",".join(TARGET_CURRENCIES)
+        symbols = ",".join(needed)
         resp = await http.get(FRANKFURTER_URL, params={"base": "USD", "symbols": symbols})
         resp.raise_for_status()
         rates = resp.json().get("rates", {})
