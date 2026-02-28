@@ -49,4 +49,4 @@ All configuration is via environment variables (see `.env.example`):
 - **Deduplication**: deals are tracked by game ID + timestamp; duplicates are never reposted
 - **Pruning**: deals older than 30 days are pruned from the database so they can be reposted if they return
 - **One message per deal**: each deal is posted individually so messages are independently linkable and dismissible
-- **Multi-currency pricing**: deal prices are shown in USD, CAD, EUR, and GBP using live exchange rates from the [Frankfurter API](https://api.frankfurter.dev) (ECB data, no API key required). Rates are cached and refreshed hourly.
+- **Multi-currency pricing**: deal prices are shown in USD, CAD, EUR, and GBP using live exchange rates from the [Frankfurter API](https://api.frankfurter.dev) (ECB data, no API key required). Rates are cached and refreshed twice daily.

@@ -1,6 +1,6 @@
 """Currency conversion using the Frankfurter API (ECB rates, no API key required).
 
-Rates are cached in memory and refreshed at most once per hour.
+Rates are cached in memory and refreshed at most twice per day.
 """
 
 import logging
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 FRANKFURTER_URL = "https://api.frankfurter.dev/v1/latest"
 TARGET_CURRENCIES = ("CAD", "EUR", "GBP")
-CACHE_TTL_SECONDS = 3600  # 1 hour
+CACHE_TTL_SECONDS = 43200  # 12 hours — be nice to the free service
 
 # Module-level cache
 _rates: dict[str, float] = {}
