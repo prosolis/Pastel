@@ -1,24 +1,17 @@
 """Message formatting for Matrix deal posts.
 
 Produces both a plain-text fallback and HTML formatted body for Matrix messages.
+HTML is built directly using the Matrix-supported HTML subset rather than going
+through a Markdown-to-HTML converter, which collapses line breaks.
 """
 
 from datetime import datetime, timezone
-
-import markdown
+from html import escape
 
 from .cheapshark import CheapSharkDeal
 from .currency import format_price
 from .epic import EpicFreeGame
 from .itad_deals import ITADDeal
-
-_md = markdown.Markdown()
-
-
-def _render_html(md_text: str) -> str:
-    """Convert Markdown to HTML, resetting the parser between calls."""
-    _md.reset()
-    return _md.convert(md_text)
 
 
 def format_deal(deal: CheapSharkDeal, is_historical_low: bool = False) -> tuple[str, str]:
@@ -32,22 +25,18 @@ def format_deal(deal: CheapSharkDeal, is_historical_low: bool = False) -> tuple[
 
     sale_multi = format_price(sale_price)
     normal_display = format_price(normal_price)
+    title = escape(deal.title)
 
-    lines = [
-        f"**🎮 [DEAL] {deal.title}**",
-        f"> {discount}% off on {deal.store_name} ~~{normal_display}~~",
-        f"> 💰 **{sale_multi}**",
+    html_lines = [
+        f"<strong>🎮 [DEAL] {title}</strong>",
+        f"{discount}% off on {escape(deal.store_name)} <del>{escape(normal_display)}</del>",
+        f"💰 <strong>{escape(sale_multi)}</strong>",
     ]
-
     if is_historical_low:
-        lines.append("> 🏆 _All-time low!_")
+        html_lines.append("🏆 <em>All-time low!</em>")
+    html_lines.append(f'🔗 <a href="{escape(deal.deal_url)}">View Deal</a>')
+    html = "<br>\n".join(html_lines)
 
-    lines.append(f"> 🔗 [View Deal]({deal.deal_url})")
-
-    md_text = "\n".join(lines)
-    html = _render_html(md_text)
-
-    # Plain text fallback — strip markdown syntax
     plain_lines = [
         f"🎮 [DEAL] {deal.title}",
         f"  {discount}% off on {deal.store_name} (was {normal_display})",
@@ -56,7 +45,6 @@ def format_deal(deal: CheapSharkDeal, is_historical_low: bool = False) -> tuple[
     if is_historical_low:
         plain_lines.append("  🏆 All-time low!")
     plain_lines.append(f"  🔗 {deal.deal_url}")
-
     plain_text = "\n".join(plain_lines)
 
     return plain_text, html
@@ -69,20 +57,17 @@ def format_itad_deal(deal: ITADDeal) -> tuple[str, str]:
     """
     sale_multi = format_price(deal.sale_price)
     normal_display = format_price(deal.normal_price)
+    title = escape(deal.title)
 
-    lines = [
-        f"**🎮 [DEAL] {deal.title}**",
-        f"> {deal.discount}% off on {deal.shop_name} ~~{normal_display}~~",
-        f"> 💰 **{sale_multi}**",
+    html_lines = [
+        f"<strong>🎮 [DEAL] {title}</strong>",
+        f"{deal.discount}% off on {escape(deal.shop_name)} <del>{escape(normal_display)}</del>",
+        f"💰 <strong>{escape(sale_multi)}</strong>",
     ]
-
     if deal.is_historical_low:
-        lines.append("> 🏆 _All-time low!_")
-
-    lines.append(f"> 🔗 [View Deal]({deal.url})")
-
-    md_text = "\n".join(lines)
-    html = _render_html(md_text)
+        html_lines.append("🏆 <em>All-time low!</em>")
+    html_lines.append(f'🔗 <a href="{escape(deal.url)}">View Deal</a>')
+    html = "<br>\n".join(html_lines)
 
     plain_lines = [
         f"🎮 [DEAL] {deal.title}",
@@ -92,7 +77,6 @@ def format_itad_deal(deal: ITADDeal) -> tuple[str, str]:
     if deal.is_historical_low:
         plain_lines.append("  🏆 All-time low!")
     plain_lines.append(f"  🔗 {deal.url}")
-
     plain_text = "\n".join(plain_lines)
 
     return plain_text, html
@@ -103,26 +87,25 @@ def format_epic_free(game: EpicFreeGame) -> tuple[str, str]:
 
     Returns (body, formatted_body).
     """
-    lines = [
-        f"**🆓 [FREE] {game.title}**",
-        "> Free on Epic Games Store",
+    title = escape(game.title)
+
+    html_lines = [
+        f"<strong>🆓 [FREE] {title}</strong>",
+        "Free on Epic Games Store",
     ]
 
     if game.end_date:
         try:
             end_dt = datetime.fromisoformat(game.end_date.replace("Z", "+00:00"))
             date_str = end_dt.strftime("%B %-d")
-            lines.append(f"> 📅 _Free until {date_str}_")
+            html_lines.append(f"📅 <em>Free until {date_str}</em>")
         except (ValueError, TypeError):
             pass
 
     if game.url:
-        lines.append(f"> 🔗 [Claim Now]({game.url})")
+        html_lines.append(f'🔗 <a href="{escape(game.url)}">Claim Now</a>')
+    html = "<br>\n".join(html_lines)
 
-    md_text = "\n".join(lines)
-    html = _render_html(md_text)
-
-    # Plain text fallback
     plain_lines = [
         f"🆓 [FREE] {game.title}",
         "  Free on Epic Games Store",
@@ -136,7 +119,6 @@ def format_epic_free(game: EpicFreeGame) -> tuple[str, str]:
             pass
     if game.url:
         plain_lines.append(f"  🔗 {game.url}")
-
     plain_text = "\n".join(plain_lines)
 
     return plain_text, html
@@ -144,24 +126,24 @@ def format_epic_free(game: EpicFreeGame) -> tuple[str, str]:
 
 def format_epic_upcoming(game: EpicFreeGame) -> tuple[str, str]:
     """Format an upcoming Epic free game into (plain_text, html) for Matrix."""
-    lines = [
-        f"**📢 [UPCOMING FREE] {game.title}**",
-        "> Coming soon — Free on Epic Games Store",
+    title = escape(game.title)
+
+    html_lines = [
+        f"<strong>📢 [UPCOMING FREE] {title}</strong>",
+        "Coming soon — Free on Epic Games Store",
     ]
 
     if game.end_date:
         try:
             end_dt = datetime.fromisoformat(game.end_date.replace("Z", "+00:00"))
             date_str = end_dt.strftime("%B %-d")
-            lines.append(f"> 📅 _Free until {date_str}_")
+            html_lines.append(f"📅 <em>Free until {date_str}</em>")
         except (ValueError, TypeError):
             pass
 
     if game.url:
-        lines.append(f"> 🔗 [Store Page]({game.url})")
-
-    md_text = "\n".join(lines)
-    html = _render_html(md_text)
+        html_lines.append(f'🔗 <a href="{escape(game.url)}">Store Page</a>')
+    html = "<br>\n".join(html_lines)
 
     plain_lines = [
         f"📢 [UPCOMING FREE] {game.title}",
@@ -169,7 +151,6 @@ def format_epic_upcoming(game: EpicFreeGame) -> tuple[str, str]:
     ]
     if game.url:
         plain_lines.append(f"  🔗 {game.url}")
-
     plain_text = "\n".join(plain_lines)
 
     return plain_text, html

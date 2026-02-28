@@ -81,11 +81,18 @@ async def fetch_deals(
         if not deal_data:
             continue
 
+        # Only include actual games and DLC — skip non-game content
+        # (courses, software bundles, etc.)
+        entry_type = entry.get("type")
+        title = entry.get("title", "?")
+        if entry_type not in ("game", "dlc"):
+            logger.debug("Filtered out %s: type=%s", title, entry_type)
+            continue
+
         cut = deal_data.get("cut", 0)
         price_amount = deal_data.get("price", {}).get("amount", 0)
         regular_amount = deal_data.get("regular", {}).get("amount", 0)
         currency = deal_data.get("price", {}).get("currency", "USD")
-        title = entry.get("title", "?")
 
         # Apply filters
         if cut < min_discount:
