@@ -5,13 +5,14 @@ import logging
 
 import httpx
 
-from .cheapshark import CheapSharkDeal, fetch_deals
+from .cheapshark import CheapSharkDeal, fetch_deals as fetch_cheapshark_deals
 from .config import Config
 from .currency import refresh_rates
 from .database import Database
 from .epic import EpicFreeGame, fetch_free_games
-from .formatter import format_deal, format_epic_free, format_epic_upcoming
+from .formatter import format_deal, format_epic_free, format_epic_upcoming, format_itad_deal
 from .itad import check_single_historical_low
+from .itad_deals import ITADDeal, fetch_deals as fetch_itad_deals
 from .matrix_client import MatrixDealsClient
 
 logger = logging.getLogger(__name__)
@@ -53,23 +54,38 @@ class DealsBot:
         await self.db.close()
 
     async def _populate_initial_state(self):
-        """Fetch current CheapShark deals and record them without posting (avoids spam on first run).
+        """Fetch current deals and record them without posting (avoids spam on first run).
 
         Epic free games are intentionally *not* recorded here so that the
         subsequent ``check_epic_free_games`` call will post them.  There are
         only a handful at any time and they are time-limited, so users should
         see them immediately rather than waiting for the next cycle.
         """
-        deals = await fetch_deals(
-            self._http,
-            max_price=self.config.max_price_usd,
-            min_rating=self.config.min_deal_rating,
-            min_discount=self.config.min_discount_percent,
-        )
-        for deal in deals:
-            await self.db.mark_posted(deal.dedup_id, "cheapshark", deal.title)
+        total = 0
 
-        logger.info("First run: recorded %d existing CheapShark deals", len(deals))
+        if "cheapshark" in self.config.deal_sources:
+            deals = await fetch_cheapshark_deals(
+                self._http,
+                max_price=self.config.max_price_usd,
+                min_rating=self.config.min_deal_rating,
+                min_discount=self.config.min_discount_percent,
+            )
+            for deal in deals:
+                await self.db.mark_posted(deal.dedup_id, "cheapshark", deal.title)
+            total += len(deals)
+
+        if "itad" in self.config.deal_sources and self.config.itad_api_key:
+            itad_deals = await fetch_itad_deals(
+                self._http,
+                self.config.itad_api_key,
+                max_price=self.config.max_price_usd,
+                min_discount=self.config.min_discount_percent,
+            )
+            for deal in itad_deals:
+                await self.db.mark_posted(deal.dedup_id, "itad", deal.title)
+            total += len(itad_deals)
+
+        logger.info("First run: recorded %d existing deals", total)
 
     async def send_intro(self):
         """Send an intro message to the Matrix room if configured."""
@@ -81,9 +97,11 @@ class DealsBot:
         """Poll CheapShark for deals and post new ones."""
         if not self._first_run_done:
             return
+        if "cheapshark" not in self.config.deal_sources:
+            return
 
         logger.info("Checking CheapShark for deals...")
-        deals = await fetch_deals(
+        deals = await fetch_cheapshark_deals(
             self._http,
             max_price=self.config.max_price_usd,
             min_rating=self.config.min_deal_rating,
@@ -94,6 +112,29 @@ class DealsBot:
             await self._process_deal(deal)
 
         # Prune old records
+        await self.db.prune_old(days=30)
+
+    async def check_itad_deals(self):
+        """Poll IsThereAnyDeal for deals and post new ones."""
+        if not self._first_run_done:
+            return
+        if "itad" not in self.config.deal_sources:
+            return
+        if not self.config.itad_api_key:
+            logger.warning("ITAD deal source enabled but ITAD_API_KEY is not set")
+            return
+
+        logger.info("Checking IsThereAnyDeal for deals...")
+        deals = await fetch_itad_deals(
+            self._http,
+            self.config.itad_api_key,
+            max_price=self.config.max_price_usd,
+            min_discount=self.config.min_discount_percent,
+        )
+
+        for deal in deals:
+            await self._process_itad_deal(deal)
+
         await self.db.prune_old(days=30)
 
     async def _process_deal(self, deal: CheapSharkDeal):
@@ -118,6 +159,20 @@ class DealsBot:
             logger.info("Posted deal: %s", deal.title)
         else:
             logger.warning("Failed to post deal: %s — will retry next cycle", deal.title)
+
+    async def _process_itad_deal(self, deal: ITADDeal):
+        """Check dedup, format, and post a single ITAD deal."""
+        if await self.db.has_been_posted(deal.dedup_id):
+            return
+
+        plain_text, html = format_itad_deal(deal)
+        success = await self.matrix.send_deal(plain_text, html)
+
+        if success:
+            await self.db.mark_posted(deal.dedup_id, "itad", deal.title)
+            logger.info("Posted ITAD deal: %s", deal.title)
+        else:
+            logger.warning("Failed to post ITAD deal: %s — will retry next cycle", deal.title)
 
     async def check_epic_free_games(self):
         """Poll Epic Games Store for free games and post new ones."""

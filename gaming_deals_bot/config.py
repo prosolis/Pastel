@@ -14,6 +14,12 @@ class Config:
         # ITAD API key (optional — historical low checks disabled without it)
         self.itad_api_key = os.environ.get("ITAD_API_KEY", "")
 
+        # Deal sources: comma-separated list of "cheapshark", "itad" (default: cheapshark)
+        raw_sources = os.environ.get("DEAL_SOURCES", "cheapshark")
+        self.deal_sources: list[str] = [
+            s.strip().lower() for s in raw_sources.split(",") if s.strip()
+        ]
+
         # Deal filtering
         self.min_deal_rating = float(os.environ.get("MIN_DEAL_RATING", "8.0"))
         self.min_discount_percent = int(os.environ.get("MIN_DISCOUNT_PERCENT", "50"))

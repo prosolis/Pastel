@@ -10,6 +10,7 @@ import markdown
 from .cheapshark import CheapSharkDeal
 from .currency import format_price
 from .epic import EpicFreeGame
+from .itad_deals import ITADDeal
 
 _md = markdown.Markdown()
 
@@ -55,6 +56,42 @@ def format_deal(deal: CheapSharkDeal, is_historical_low: bool = False) -> tuple[
     if is_historical_low:
         plain_lines.append("  🏆 All-time low!")
     plain_lines.append(f"  🔗 {deal.deal_url}")
+
+    plain_text = "\n".join(plain_lines)
+
+    return plain_text, html
+
+
+def format_itad_deal(deal: ITADDeal) -> tuple[str, str]:
+    """Format an ITAD deal into (plain_text, html) for Matrix.
+
+    Returns (body, formatted_body).
+    """
+    sale_multi = format_price(deal.sale_price)
+    normal_display = format_price(deal.normal_price)
+
+    lines = [
+        f"**🎮 [DEAL] {deal.title}**",
+        f"> {deal.discount}% off on {deal.shop_name} ~~{normal_display}~~",
+        f"> 💰 **{sale_multi}**",
+    ]
+
+    if deal.is_historical_low:
+        lines.append("> 🏆 _All-time low!_")
+
+    lines.append(f"> 🔗 [View Deal]({deal.url})")
+
+    md_text = "\n".join(lines)
+    html = _render_html(md_text)
+
+    plain_lines = [
+        f"🎮 [DEAL] {deal.title}",
+        f"  {deal.discount}% off on {deal.shop_name} (was {normal_display})",
+        f"  💰 {sale_multi}",
+    ]
+    if deal.is_historical_low:
+        plain_lines.append("  🏆 All-time low!")
+    plain_lines.append(f"  🔗 {deal.url}")
 
     plain_text = "\n".join(plain_lines)
 
