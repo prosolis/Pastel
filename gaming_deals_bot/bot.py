@@ -72,6 +72,12 @@ class DealsBot:
         total = len(deals) + len(current_free) + len(upcoming)
         logger.info("First run: recorded %d existing deals/games", total)
 
+    async def send_intro(self):
+        """Send an intro message to the Matrix room if configured."""
+        if not self.config.send_intro_message:
+            return
+        await self.matrix.send_notice("The deals must flow.")
+
     async def check_cheapshark(self):
         """Poll CheapShark for deals and post new ones."""
         if not self._first_run_done:

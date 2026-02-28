@@ -63,6 +63,7 @@ All configuration is via environment variables (see `.env.example`):
 | `MIN_DEAL_RATING` | No | 8.0 | Minimum CheapShark deal rating (0-10) |
 | `MIN_DISCOUNT_PERCENT` | No | 50 | Minimum discount percentage |
 | `MAX_PRICE_USD` | No | 20 | Maximum sale price in USD |
+| `SEND_INTRO_MESSAGE` | No | false | Send "The deals must flow." to the room on startup |
 | `DATABASE_PATH` | No | deals.db | Path to SQLite database file |
 
 ## Preflight Check

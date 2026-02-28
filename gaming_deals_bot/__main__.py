@@ -69,6 +69,8 @@ async def main():
     scheduler.start()
     logger.info("Bot started — scheduler running")
 
+    await bot.send_intro()
+
     # Run initial checks immediately (after first-run population is done)
     await bot.check_cheapshark()
     await bot.check_epic_free_games()
