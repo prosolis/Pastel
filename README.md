@@ -65,6 +65,24 @@ All configuration is via environment variables (see `.env.example`):
 | `MAX_PRICE_USD` | No | 20 | Maximum sale price in USD |
 | `DATABASE_PATH` | No | deals.db | Path to SQLite database file |
 
+## Preflight Check
+
+Run `--check` to validate your configuration and test connectivity to all services before starting the bot:
+
+```bash
+python -m gaming_deals_bot --check
+```
+
+This verifies:
+
+- **Matrix** — authentication token is valid and bot has joined the target room
+- **CheapShark** — API is reachable
+- **Epic Games Store** — API is reachable
+- **Frankfurter** — exchange rate API is reachable
+- **IsThereAnyDeal** — API key is valid (skipped if not configured)
+
+The command exits with code 0 on success and 1 on failure, so it works in CI and Docker health-checks.
+
 ## Behavior
 
 - **First run**: fetches current deals and records them in the database without posting (avoids spamming the room with existing deals)
