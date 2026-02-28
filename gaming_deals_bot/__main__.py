@@ -9,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from .bot import DealsBot
 from .config import Config
+from .preflight import run_preflight
 
 
 def setup_logging():
@@ -23,11 +24,17 @@ async def main():
     setup_logging()
     logger = logging.getLogger("gaming_deals_bot")
 
+    check_mode = "--check" in sys.argv
+
     try:
         config = Config()
     except ValueError as exc:
         logger.error("Configuration error: %s", exc)
         sys.exit(1)
+
+    if check_mode:
+        ok = await run_preflight(config)
+        sys.exit(0 if ok else 1)
 
     bot = DealsBot(config)
     await bot.start()
