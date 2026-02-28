@@ -46,8 +46,8 @@ async def fetch_deals(
     client: httpx.AsyncClient,
     *,
     max_price: float = 20,
-    min_rating: int = 80,
-    min_discount: int = 50,
+    min_rating: float = 8.0,
+    min_discount: float = 50,
     page_size: int = 10,
 ) -> list[CheapSharkDeal]:
     """Fetch top deals from CheapShark across configured stores."""
@@ -81,7 +81,7 @@ async def fetch_deals(
         if savings < min_discount:
             logger.debug("Filtered out %s: savings %.1f%% < %.1f%%", title, savings, min_discount)
             continue
-        if rating < min_rating:
+        if rating > 0 and rating < min_rating:
             logger.debug("Filtered out %s: rating %.1f < %.1f", title, rating, min_rating)
             continue
 
