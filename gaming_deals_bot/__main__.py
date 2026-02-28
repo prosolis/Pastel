@@ -13,17 +13,22 @@ from .config import Config
 from .preflight import run_preflight
 
 
-def setup_logging():
+def setup_logging(*, debug: bool = False):
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG if debug else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stdout,
     )
+    if not debug:
+        # Keep noisy third-party loggers quiet even in debug mode
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 async def main():
     load_dotenv()
-    setup_logging()
+    debug_mode = "--debug" in sys.argv
+    setup_logging(debug=debug_mode)
     logger = logging.getLogger("gaming_deals_bot")
 
     check_mode = "--check" in sys.argv

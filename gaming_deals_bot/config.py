@@ -15,7 +15,7 @@ class Config:
         self.itad_api_key = os.environ.get("ITAD_API_KEY", "")
 
         # Deal filtering
-        self.min_deal_rating = int(os.environ.get("MIN_DEAL_RATING", "80"))
+        self.min_deal_rating = float(os.environ.get("MIN_DEAL_RATING", "8.0"))
         self.min_discount_percent = int(os.environ.get("MIN_DISCOUNT_PERCENT", "50"))
         self.max_price_usd = float(os.environ.get("MAX_PRICE_USD", "20"))
 
