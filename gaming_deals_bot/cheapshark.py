@@ -68,14 +68,21 @@ async def fetch_deals(
         logger.error("CheapShark API error: %s", exc)
         return []
 
+    logger.info(
+        "CheapShark returned %d raw deals (before filtering)", len(raw_deals),
+    )
+
     deals = []
     for d in raw_deals:
         savings = float(d.get("savings", 0))
         rating = float(d.get("dealRating", 0))
+        title = d.get("title", "?")
 
         if savings < min_discount:
+            logger.debug("Filtered out %s: savings %.1f%% < %.1f%%", title, savings, min_discount)
             continue
         if rating < min_rating:
+            logger.debug("Filtered out %s: rating %.1f < %.1f", title, rating, min_rating)
             continue
 
         steam_app_id = d.get("steamAppID") or None
