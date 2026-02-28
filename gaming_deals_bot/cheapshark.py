@@ -55,7 +55,7 @@ async def fetch_deals(
     params = {
         "storeID": store_ids,
         "upperPrice": str(int(max_price)),
-        "sortBy": "Deal Rating",
+        "sortBy": "recent",
         "desc": "1",
         "pageSize": str(page_size),
     }
