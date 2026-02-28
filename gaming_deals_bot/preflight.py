@@ -52,7 +52,10 @@ async def run_preflight(config: Config) -> bool:
 
         # --- CheapShark ---
         print(f"\n{_BOLD}CheapShark{_RESET}")
-        all_ok &= await _check_cheapshark(http)
+        if "cheapshark" in config.deal_sources:
+            all_ok &= await _check_cheapshark(http)
+        else:
+            _skip("Skipped", "not in DEAL_SOURCES")
 
         # --- Epic Games Store ---
         print(f"\n{_BOLD}Epic Games Store{_RESET}")
@@ -62,9 +65,10 @@ async def run_preflight(config: Config) -> bool:
         print(f"\n{_BOLD}Frankfurter (exchange rates){_RESET}")
         all_ok &= await _check_frankfurter(http)
 
-        # --- IsThereAnyDeal (optional) ---
+        # --- IsThereAnyDeal ---
+        itad_required = "itad" in config.deal_sources
         print(f"\n{_BOLD}IsThereAnyDeal{_RESET}")
-        all_ok &= await _check_itad(http, config.itad_api_key)
+        all_ok &= await _check_itad(http, config.itad_api_key, required=itad_required)
 
     # --- Summary ---
     print()
@@ -164,9 +168,15 @@ async def _check_frankfurter(http: httpx.AsyncClient) -> bool:
         return _fail("API reachable", str(exc))
 
 
-async def _check_itad(http: httpx.AsyncClient, api_key: str) -> bool:
-    """Verify the ITAD API key works (optional — skipped if no key is set)."""
+async def _check_itad(http: httpx.AsyncClient, api_key: str, *, required: bool = False) -> bool:
+    """Verify the ITAD API key works.
+
+    When *required* is True (ITAD is a deal source), a missing key is a failure.
+    Otherwise it's an optional skip.
+    """
     if not api_key:
+        if required:
+            return _fail("API key", "ITAD_API_KEY is required when 'itad' is in DEAL_SOURCES")
         return _skip("Skipped", "no ITAD_API_KEY configured (optional)")
 
     try:

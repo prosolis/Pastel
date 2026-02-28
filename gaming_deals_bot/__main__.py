@@ -48,14 +48,25 @@ async def main():
 
     scheduler = AsyncIOScheduler()
 
-    # CheapShark: every 2 hours
-    scheduler.add_job(
-        bot.check_cheapshark,
-        "interval",
-        hours=2,
-        id="cheapshark",
-        name="CheapShark deals check",
-    )
+    # CheapShark: every 2 hours (if enabled)
+    if "cheapshark" in config.deal_sources:
+        scheduler.add_job(
+            bot.check_cheapshark,
+            "interval",
+            hours=2,
+            id="cheapshark",
+            name="CheapShark deals check",
+        )
+
+    # ITAD deals: every 2 hours (if enabled)
+    if "itad" in config.deal_sources:
+        scheduler.add_job(
+            bot.check_itad_deals,
+            "interval",
+            hours=2,
+            id="itad_deals",
+            name="ITAD deals check",
+        )
 
     # Epic free games: once daily
     scheduler.add_job(
@@ -67,12 +78,16 @@ async def main():
     )
 
     scheduler.start()
-    logger.info("Bot started — scheduler running")
+    logger.info(
+        "Bot started — scheduler running (deal sources: %s)",
+        ", ".join(config.deal_sources),
+    )
 
     await bot.send_intro()
 
     # Run initial checks immediately (after first-run population is done)
     await bot.check_cheapshark()
+    await bot.check_itad_deals()
     await bot.check_epic_free_games()
 
     # Keep running until signaled to stop
