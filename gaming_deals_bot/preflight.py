@@ -170,14 +170,17 @@ async def _check_itad(http: httpx.AsyncClient, api_key: str) -> bool:
         return _skip("Skipped", "no ITAD_API_KEY configured (optional)")
 
     try:
-        # Use a lightweight endpoint to validate the key
+        # Use the lookup endpoint (GET) to validate the key with a known game
         resp = await http.get(
-            f"{ITAD_URL}/games/overview/v2",
-            params={"key": api_key, "apps[]": "app/220"},  # Half-Life 2
+            f"{ITAD_URL}/games/lookup/v1",
+            params={"key": api_key, "appid": 220},  # Half-Life 2
         )
-        if resp.status_code == 401 or resp.status_code == 403:
+        if resp.status_code in (401, 403):
             return _fail("API key", "rejected by ITAD (401/403)")
         resp.raise_for_status()
-        return _pass("API key valid", "ITAD responded successfully")
+        data = resp.json()
+        if data.get("found"):
+            return _pass("API reachable", "ITAD responded successfully")
+        return _pass("API reachable", "ITAD key valid (game not found)")
     except Exception as exc:
         return _fail("API reachable", str(exc))
