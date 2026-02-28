@@ -7,8 +7,10 @@ Deals are sourced from PC/digital storefronts only (Steam, GOG, Humble Store, Gr
 ## Data Sources
 
 - **CheapShark** — polled every 2 hours for top deals across Steam, GOG, Humble Store, and GreenManGaming
+- **IsThereAnyDeal** — polled every 2 hours for deals across all tracked stores, with built-in historical low detection (requires API key)
 - **Epic Games Store** — polled daily for free game promotions
-- **IsThereAnyDeal** (optional) — flags deals that are at an all-time historical low price
+
+CheapShark and IsThereAnyDeal can be used individually or together — configure via the `DEAL_SOURCES` variable. When used as a deal source, IsThereAnyDeal provides historical low flags directly. When only CheapShark is active, IsThereAnyDeal can still optionally enrich deals with historical low info via the `ITAD_API_KEY`.
 
 ## Quick Start
 
@@ -59,7 +61,8 @@ All configuration is via environment variables (see `.env.example`):
 | `MATRIX_BOT_USER_ID` | Yes | — | Bot's Matrix user ID |
 | `MATRIX_BOT_ACCESS_TOKEN` | Yes | — | Bot's access token |
 | `MATRIX_DEALS_ROOM_ID` | Yes | — | Room ID to post deals in |
-| `ITAD_API_KEY` | No | — | IsThereAnyDeal API key for historical low detection |
+| `ITAD_API_KEY` | No | — | IsThereAnyDeal API key (required when `itad` is in `DEAL_SOURCES`, optional otherwise for historical low detection) |
+| `DEAL_SOURCES` | No | cheapshark | Comma-separated deal sources: `cheapshark`, `itad`, or `cheapshark,itad` |
 | `MIN_DEAL_RATING` | No | 8.0 | Minimum CheapShark deal rating (0-10) |
 | `MIN_DISCOUNT_PERCENT` | No | 50 | Minimum discount percentage |
 | `MAX_PRICE_USD` | No | 20 | Maximum sale price in USD |
@@ -77,10 +80,10 @@ python -m gaming_deals_bot --check
 This verifies:
 
 - **Matrix** — authentication token is valid and bot has joined the target room
-- **CheapShark** — API is reachable
+- **CheapShark** — API is reachable (skipped if not in `DEAL_SOURCES`)
 - **Epic Games Store** — API is reachable
 - **Frankfurter** — exchange rate API is reachable
-- **IsThereAnyDeal** — API key is valid (skipped if not configured)
+- **IsThereAnyDeal** — API key is valid (required when `itad` is in `DEAL_SOURCES`, skipped otherwise if not configured)
 
 The command exits with code 0 on success and 1 on failure, so it works in CI and Docker health-checks.
 
