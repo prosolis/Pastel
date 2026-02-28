@@ -50,9 +50,14 @@ async def fetch_deals(
     countries: list[str] | None = None,
     max_price: float = 20,
     min_discount: float = 50,
-    limit: int = 100,
+    limit: int = 200,
 ) -> list[ITADDeal]:
     """Fetch current deals from IsThereAnyDeal across one or more countries.
+
+    Defaults to the API maximum of 200 deals per country so that client-side
+    filtering (discount, price, type) has the widest possible pool to work
+    with — this avoids missing deals that wouldn't appear in a smaller window
+    sorted only by discount.
 
     Deals are fetched per-country, merged (first country in the list wins
     when the same game+shop appears in multiple regions), and finally sorted
@@ -105,7 +110,7 @@ async def _fetch_country_deals(
     country: str = "US",
     max_price: float = 20,
     min_discount: float = 50,
-    limit: int = 100,
+    limit: int = 200,
 ) -> list[ITADDeal]:
     """Fetch deals for a single country from the ITAD ``/deals/v2`` endpoint."""
     params: dict = {

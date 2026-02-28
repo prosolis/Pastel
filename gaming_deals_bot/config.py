@@ -60,7 +60,7 @@ class Config:
         self.itad_max_price = float(
             os.environ.get("ITAD_MAX_PRICE", _max_price)
         )
-        self.itad_deals_limit = int(os.environ.get("ITAD_DEALS_LIMIT", "100"))
+        self.itad_deals_limit = int(os.environ.get("ITAD_DEALS_LIMIT", "200"))
 
         # Intro message on startup
         self.send_intro_message = os.environ.get(

@@ -82,7 +82,7 @@ Each deal source has its own filter settings. Source-specific values take priori
 | `CHEAPSHARK_MAX_PRICE` | CheapShark | 20 | Maximum sale price (USD) |
 | `ITAD_MIN_DISCOUNT` | ITAD | 50 | Minimum discount percentage |
 | `ITAD_MAX_PRICE` | ITAD | 20 | Maximum sale price (USD, prices from other regions are converted) |
-| `ITAD_DEALS_LIMIT` | ITAD | 100 | Number of deals to fetch per country (max 200) |
+| `ITAD_DEALS_LIMIT` | ITAD | 200 | Number of deals to fetch per country (max 200) |
 | `MIN_DISCOUNT_PERCENT` | Shared | 50 | Fallback minimum discount when source-specific value is not set |
 | `MAX_PRICE` | Shared | 20 | Fallback maximum price when source-specific value is not set |
 
