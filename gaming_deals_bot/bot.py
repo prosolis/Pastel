@@ -7,6 +7,7 @@ import httpx
 
 from .cheapshark import CheapSharkDeal, fetch_deals
 from .config import Config
+from .currency import refresh_rates
 from .database import Database
 from .epic import EpicFreeGame, fetch_free_games
 from .formatter import format_deal, format_epic_free, format_epic_upcoming
@@ -30,8 +31,11 @@ class DealsBot:
         self._first_run_done = False
 
     async def start(self):
-        """Initialize database and run first-run population."""
+        """Initialize database, fetch exchange rates, and run first-run population."""
         await self.db.connect()
+
+        # Pre-fetch exchange rates so the first deal post has conversions
+        await refresh_rates(self._http)
 
         first_run = await self.db.get_config("first_run_done")
         if first_run != "true":
