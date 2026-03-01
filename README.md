@@ -68,6 +68,7 @@ All configuration is via environment variables (see `.env.example`):
 | `ITAD_COUNTRIES` | No | US | Comma-separated ISO 3166-1 alpha-2 country codes to fetch ITAD deals from (e.g. `US,CA,GB,DE`) |
 | `DEFAULT_CURRENCY` | No | USD | Primary display currency shown first in price strings |
 | `EXTRA_CURRENCIES` | No | CAD,EUR,GBP | Additional currencies shown after the default (comma-separated) |
+| `MATRIX_USE_THREADS` | No | false | Post deals into per-category threads (see Threads section below) |
 | `SEND_INTRO_MESSAGE` | No | false | Send "The deals must flow." to the room on startup |
 | `DATABASE_PATH` | No | deals.db | Path to SQLite database file |
 
@@ -103,6 +104,21 @@ This verifies:
 - **IsThereAnyDeal** — API key is valid (required when `itad` is in `DEAL_SOURCES`, skipped otherwise if not configured)
 
 The command exits with code 0 on success and 1 on failure, so it works in CI and Docker health-checks.
+
+## Threads
+
+When `MATRIX_USE_THREADS=true`, deals are posted inside per-category threads instead of directly into the room timeline. This keeps the room organized and lets users follow only the categories they care about.
+
+| Thread | Content |
+|---|---|
+| 🎮 Game Deals | CheapShark deals + ITAD deals with type `game` |
+| 🧩 DLC Deals | ITAD deals with type `dlc` |
+| 🆓 Epic Free Games | Current and upcoming free games from the Epic Games Store |
+| 📦 Non-Game Deals | ITAD deals that aren't games or DLC (software, courses, etc.) |
+
+Thread root messages are created automatically the first time a deal in that category appears. The root event IDs are stored in the database so subsequent deals are posted into the same threads.
+
+When threads are **disabled** (default), the bot behaves as before — all deals post directly to the room and non-game ITAD content is excluded.
 
 ## Behavior
 

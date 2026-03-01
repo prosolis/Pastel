@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from nio import AsyncClient, PresenceSetError, RoomSendError
+from nio import AsyncClient, PresenceSetError, RoomSendError, RoomSendResponse
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,70 @@ class MatrixDealsClient:
         except Exception as exc:
             logger.error("Matrix send error: %s", exc)
             return False
+
+    async def send_deal_in_thread(
+        self, plain_text: str, html: str, thread_root_id: str
+    ) -> bool:
+        """Send a deal message as a reply inside a Matrix thread.
+
+        ``thread_root_id`` is the ``$event_id`` of the thread root message.
+        """
+        content = {
+            "msgtype": "m.text",
+            "format": "org.matrix.custom.html",
+            "body": plain_text,
+            "formatted_body": html,
+            "m.relates_to": {
+                "rel_type": "m.thread",
+                "event_id": thread_root_id,
+                # Fallback for clients that don't support threads
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_root_id},
+            },
+        }
+
+        try:
+            resp = await self._client.room_send(
+                room_id=self.room_id,
+                message_type="m.room.message",
+                content=content,
+            )
+            if isinstance(resp, RoomSendError):
+                logger.error("Failed to send threaded message: %s", resp.message)
+                return False
+            logger.debug("Threaded message sent: %s (thread %s)", resp.event_id, thread_root_id)
+            return True
+        except Exception as exc:
+            logger.error("Matrix threaded send error: %s", exc)
+            return False
+
+    async def create_thread_root(self, plain_text: str, html: str) -> str | None:
+        """Send a message that will serve as a thread root.
+
+        Returns the ``$event_id`` on success, or ``None`` on failure.
+        """
+        content = {
+            "msgtype": "m.text",
+            "format": "org.matrix.custom.html",
+            "body": plain_text,
+            "formatted_body": html,
+        }
+
+        try:
+            resp = await self._client.room_send(
+                room_id=self.room_id,
+                message_type="m.room.message",
+                content=content,
+            )
+            if isinstance(resp, RoomSendError):
+                logger.error("Failed to create thread root: %s", resp.message)
+                return None
+            assert isinstance(resp, RoomSendResponse)
+            logger.info("Thread root created: %s", resp.event_id)
+            return resp.event_id
+        except Exception as exc:
+            logger.error("Matrix thread root error: %s", exc)
+            return None
 
     async def set_presence(self, presence: str) -> bool:
         """Set the bot's presence status on the homeserver.

@@ -19,6 +19,7 @@ class ITADDeal:
     game_id: str  # ITAD UUID
     slug: str
     title: str
+    deal_type: str  # ITAD type: "game", "dlc", or other
     sale_price: float  # current deal price (normalised to USD)
     normal_price: float  # regular (non-sale) price (normalised to USD)
     discount: int  # percentage off (0-100)
@@ -140,13 +141,8 @@ async def _fetch_country_deals(
         if not deal_data:
             continue
 
-        # Only include actual games and DLC — skip non-game content
-        # (courses, software bundles, etc.)
-        entry_type = entry.get("type")
+        entry_type = entry.get("type", "game")
         title = entry.get("title", "?")
-        if entry_type not in ("game", "dlc"):
-            logger.debug("Filtered out %s: type=%s", title, entry_type)
-            continue
 
         cut = deal_data.get("cut", 0)
         price_amount = deal_data.get("price", {}).get("amount", 0)
@@ -182,6 +178,7 @@ async def _fetch_country_deals(
                 game_id=entry.get("id", ""),
                 slug=entry.get("slug", ""),
                 title=title,
+                deal_type=entry_type,
                 sale_price=price_usd,
                 normal_price=regular_usd,
                 discount=cut,
