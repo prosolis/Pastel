@@ -62,6 +62,11 @@ class Config:
         )
         self.itad_deals_limit = int(os.environ.get("ITAD_DEALS_LIMIT", "200"))
 
+        # Matrix threads — post deals into per-category threads
+        self.matrix_use_threads = os.environ.get(
+            "MATRIX_USE_THREADS", "false"
+        ).lower() in ("true", "1", "yes")
+
         # Intro message on startup
         self.send_intro_message = os.environ.get(
             "SEND_INTRO_MESSAGE", "false"

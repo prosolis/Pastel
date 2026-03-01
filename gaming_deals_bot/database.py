@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS thread_roots (
+    category TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -75,5 +81,35 @@ class Database:
         await self._db.execute(
             "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
             (key, value),
+        )
+        await self._db.commit()
+
+    # ------------------------------------------------------------------
+    # Thread root management
+    # ------------------------------------------------------------------
+
+    async def get_thread_root(self, category: str) -> str | None:
+        """Return the Matrix event ID for a thread root, or None."""
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "SELECT event_id FROM thread_roots WHERE category = ?", (category,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def set_thread_root(self, category: str, event_id: str):
+        """Store the Matrix event ID for a thread root."""
+        assert self._db is not None
+        await self._db.execute(
+            "INSERT OR REPLACE INTO thread_roots (category, event_id) VALUES (?, ?)",
+            (category, event_id),
+        )
+        await self._db.commit()
+
+    async def clear_thread_root(self, category: str):
+        """Remove a stored thread root (e.g. if the event was redacted)."""
+        assert self._db is not None
+        await self._db.execute(
+            "DELETE FROM thread_roots WHERE category = ?", (category,)
         )
         await self._db.commit()

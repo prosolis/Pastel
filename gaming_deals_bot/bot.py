@@ -14,6 +14,7 @@ from .formatter import format_deal, format_epic_free, format_epic_upcoming, form
 from .itad import check_single_historical_low
 from .itad_deals import ITADDeal, fetch_deals as fetch_itad_deals
 from .matrix_client import MatrixDealsClient
+from .threads import ThreadCategory, format_thread_root, itad_type_to_category
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,43 @@ class DealsBot:
             return
         await self.matrix.send_notice("The deals must flow.")
 
+    # ------------------------------------------------------------------
+    # Thread helpers
+    # ------------------------------------------------------------------
+
+    async def _get_or_create_thread(self, category: ThreadCategory) -> str | None:
+        """Return the event ID of the thread root for *category*, creating it if needed."""
+        event_id = await self.db.get_thread_root(category.value)
+        if event_id:
+            return event_id
+
+        plain_text, html = format_thread_root(category)
+        event_id = await self.matrix.create_thread_root(plain_text, html)
+        if event_id:
+            await self.db.set_thread_root(category.value, event_id)
+            logger.info("Created thread root for %s: %s", category.value, event_id)
+        return event_id
+
+    async def _send_to_thread_or_room(
+        self, plain_text: str, html: str, category: ThreadCategory
+    ) -> bool:
+        """Send a message — into a thread if threads are enabled, otherwise to the room."""
+        if not self.config.matrix_use_threads:
+            return await self.matrix.send_deal(plain_text, html)
+
+        thread_root_id = await self._get_or_create_thread(category)
+        if not thread_root_id:
+            logger.warning(
+                "Could not obtain thread root for %s — falling back to room", category.value
+            )
+            return await self.matrix.send_deal(plain_text, html)
+
+        return await self.matrix.send_deal_in_thread(plain_text, html, thread_root_id)
+
+    # ------------------------------------------------------------------
+    # CheapShark
+    # ------------------------------------------------------------------
+
     async def check_cheapshark(self):
         """Poll CheapShark for deals and post new ones."""
         if not self._first_run_done:
@@ -121,6 +159,35 @@ class DealsBot:
 
         # Prune old records
         await self.db.prune_old(days=30)
+
+    async def _process_deal(self, deal: CheapSharkDeal):
+        """Check dedup, check historical low, format, and post a single deal."""
+        if await self.db.has_been_posted(deal.dedup_id):
+            return
+
+        # Check if this is a historical low via ITAD
+        is_historical_low = False
+        if self.config.itad_api_key and deal.steam_app_id:
+            is_historical_low = await check_single_historical_low(
+                self._http,
+                self.config.itad_api_key,
+                deal.steam_app_id,
+            )
+
+        plain_text, html = format_deal(deal, is_historical_low)
+        success = await self._send_to_thread_or_room(
+            plain_text, html, ThreadCategory.GAME_DEALS
+        )
+
+        if success:
+            await self.db.mark_posted(deal.dedup_id, "cheapshark", deal.title)
+            logger.info("Posted deal: %s", deal.title)
+        else:
+            logger.warning("Failed to post deal: %s — will retry next cycle", deal.title)
+
+    # ------------------------------------------------------------------
+    # IsThereAnyDeal
+    # ------------------------------------------------------------------
 
     async def check_itad_deals(self):
         """Poll IsThereAnyDeal for deals and post new ones."""
@@ -147,42 +214,30 @@ class DealsBot:
 
         await self.db.prune_old(days=30)
 
-    async def _process_deal(self, deal: CheapSharkDeal):
-        """Check dedup, check historical low, format, and post a single deal."""
-        if await self.db.has_been_posted(deal.dedup_id):
-            return
-
-        # Check if this is a historical low via ITAD
-        is_historical_low = False
-        if self.config.itad_api_key and deal.steam_app_id:
-            is_historical_low = await check_single_historical_low(
-                self._http,
-                self.config.itad_api_key,
-                deal.steam_app_id,
-            )
-
-        plain_text, html = format_deal(deal, is_historical_low)
-        success = await self.matrix.send_deal(plain_text, html)
-
-        if success:
-            await self.db.mark_posted(deal.dedup_id, "cheapshark", deal.title)
-            logger.info("Posted deal: %s", deal.title)
-        else:
-            logger.warning("Failed to post deal: %s — will retry next cycle", deal.title)
-
     async def _process_itad_deal(self, deal: ITADDeal):
         """Check dedup, format, and post a single ITAD deal."""
         if await self.db.has_been_posted(deal.dedup_id):
             return
 
+        category = itad_type_to_category(deal.deal_type)
+
+        # When threads are off, preserve original behaviour: skip non-game content
+        if not self.config.matrix_use_threads and category == ThreadCategory.NON_GAME_DEALS:
+            logger.debug("Skipping non-game ITAD deal (threads disabled): %s", deal.title)
+            return
+
         plain_text, html = format_itad_deal(deal)
-        success = await self.matrix.send_deal(plain_text, html)
+        success = await self._send_to_thread_or_room(plain_text, html, category)
 
         if success:
             await self.db.mark_posted(deal.dedup_id, "itad", deal.title)
-            logger.info("Posted ITAD deal: %s", deal.title)
+            logger.info("Posted ITAD deal: %s [%s]", deal.title, category.value)
         else:
             logger.warning("Failed to post ITAD deal: %s — will retry next cycle", deal.title)
+
+    # ------------------------------------------------------------------
+    # Epic Games Store
+    # ------------------------------------------------------------------
 
     async def check_epic_free_games(self):
         """Poll Epic Games Store for free games and post new ones."""
@@ -208,7 +263,9 @@ class DealsBot:
         else:
             plain_text, html = format_epic_free(game)
 
-        success = await self.matrix.send_deal(plain_text, html)
+        success = await self._send_to_thread_or_room(
+            plain_text, html, ThreadCategory.EPIC_FREE
+        )
 
         if success:
             await self.db.mark_posted(game.dedup_id, "epic", game.title)
