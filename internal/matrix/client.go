@@ -124,6 +124,15 @@ func New(cfg ClientConfig) (*Client, error) {
 		c.client = client
 	}
 
+	// Ensure DeviceID is set (required by cryptohelper)
+	if c.client.DeviceID == "" {
+		resp, err := c.client.Whoami(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("whoami failed (needed for device ID): %w", err)
+		}
+		c.client.DeviceID = resp.DeviceID
+	}
+
 	// Set up E2EE
 	if cfg.CryptoDBPath != "" {
 		ch, err := cryptohelper.NewCryptoHelper(c.client, []byte("pastel_pickle_key"), cfg.CryptoDBPath)
@@ -176,15 +185,21 @@ func (c *Client) bootstrapCrossSigning() {
 		}
 	}, "")
 	if err != nil {
-		slog.Debug("cross-signing: key upload skipped (may already exist)", "error", err)
+		slog.Warn("cross-signing: key upload failed (may already exist)", "error", err)
+	} else {
+		slog.Info("cross-signing: keys uploaded")
 	}
 
 	if err := mach.SignOwnDevice(context.Background(), mach.OwnIdentity()); err != nil {
-		slog.Debug("cross-signing: sign own device skipped", "error", err)
+		slog.Warn("cross-signing: sign own device failed", "error", err)
+	} else {
+		slog.Info("cross-signing: own device signed")
 	}
 
 	if err := mach.SignOwnMasterKey(context.Background()); err != nil {
-		slog.Debug("cross-signing: sign master key skipped", "error", err)
+		slog.Warn("cross-signing: sign master key failed", "error", err)
+	} else {
+		slog.Info("cross-signing: master key signed")
 	}
 }
 
@@ -249,7 +264,7 @@ func (c *Client) JoinedRooms() ([]string, error) {
 	return rooms, nil
 }
 
-// SendDeal sends a formatted deal message to a room.
+// SendDeal sends a formatted deal message to a room (top-level, no thread).
 func (c *Client) SendDeal(roomID, plainText, html string) error {
 	content := &event.MessageEventContent{
 		MsgType:       event.MsgText,
@@ -260,6 +275,43 @@ func (c *Client) SendDeal(roomID, plainText, html string) error {
 	_, err := c.client.SendMessageEvent(context.Background(), id.RoomID(roomID), event.EventMessage, content)
 	if err != nil {
 		return fmt.Errorf("failed to send deal message: %w", err)
+	}
+	return nil
+}
+
+// CreateThread sends a root message and returns its event ID for use as a thread root.
+func (c *Client) CreateThread(roomID, text string) (string, error) {
+	content := &event.MessageEventContent{
+		MsgType: event.MsgText,
+		Body:    text,
+	}
+	resp, err := c.client.SendMessageEvent(context.Background(), id.RoomID(roomID), event.EventMessage, content)
+	if err != nil {
+		return "", fmt.Errorf("failed to create thread: %w", err)
+	}
+	return resp.EventID.String(), nil
+}
+
+// SendDealInThread sends a formatted deal message as a reply in a thread.
+func (c *Client) SendDealInThread(roomID, threadEventID, plainText, html string) error {
+	evtID := id.EventID(threadEventID)
+	content := &event.MessageEventContent{
+		MsgType:       event.MsgText,
+		Body:          plainText,
+		Format:        event.FormatHTML,
+		FormattedBody: html,
+		RelatesTo: &event.RelatesTo{
+			Type:    event.RelThread,
+			EventID: evtID,
+			InReplyTo: &event.InReplyTo{
+				EventID: evtID,
+			},
+			IsFallingBack: true,
+		},
+	}
+	_, err := c.client.SendMessageEvent(context.Background(), id.RoomID(roomID), event.EventMessage, content)
+	if err != nil {
+		return fmt.Errorf("failed to send threaded deal: %w", err)
 	}
 	return nil
 }

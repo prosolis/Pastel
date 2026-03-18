@@ -12,11 +12,14 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	db, err := sqlx.Open("sqlite", path+"?_pragma=journal_mode(WAL)")
+	db, err := sqlx.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
 	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, err
 	}
 	d := &DB{db: db}
@@ -93,6 +96,22 @@ func (d *DB) IsFirstRunDone() (bool, error) {
 func (d *DB) SetFirstRunDone() error {
 	_, err := d.db.Exec(
 		"INSERT OR REPLACE INTO config (key, value) VALUES ('first_run_done', 'true')",
+	)
+	return err
+}
+
+// GetConfig retrieves a value from the config table.
+func (d *DB) GetConfig(key string) (string, error) {
+	var val string
+	err := d.db.Get(&val, "SELECT value FROM config WHERE key = ?", key)
+	return val, err
+}
+
+// SetConfig sets a value in the config table.
+func (d *DB) SetConfig(key, value string) error {
+	_, err := d.db.Exec(
+		"INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+		key, value,
 	)
 	return err
 }

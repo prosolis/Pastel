@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -98,6 +99,59 @@ func FetchCheapSharkDeals(maxPrice float64, pageSize int) ([]CheapSharkDeal, err
 	}
 
 	return deals, nil
+}
+
+// SearchCheapSharkDeals searches for current deals matching a title query.
+func SearchCheapSharkDeals(query string, maxResults int) ([]CheapSharkDeal, error) {
+	url := fmt.Sprintf(
+		"https://www.cheapshark.com/api/1.0/deals?storeID=1,7,11,23&sortBy=savings&desc=1&pageSize=%d&title=%s",
+		maxResults, url.QueryEscape(query),
+	)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("cheapshark search failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cheapshark returned status %d", resp.StatusCode)
+	}
+
+	var raw []cheapSharkRaw
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("cheapshark decode failed: %w", err)
+	}
+
+	var results []CheapSharkDeal
+	for _, d := range raw {
+		sale, _ := strconv.ParseFloat(d.SalePrice, 64)
+		normal, _ := strconv.ParseFloat(d.NormalPrice, 64)
+		savings, _ := strconv.ParseFloat(d.Savings, 64)
+
+		if savings <= 0 {
+			continue
+		}
+
+		storeName := storeNames[d.StoreID]
+		if storeName == "" {
+			storeName = "Unknown"
+		}
+
+		results = append(results, CheapSharkDeal{
+			DealID:     d.DealID,
+			GameID:     d.GameID,
+			Title:      d.Title,
+			SalePrice:  sale,
+			NormalPrice: normal,
+			Savings:    savings,
+			StoreID:    d.StoreID,
+			StoreName:  storeName,
+			DealURL:    fmt.Sprintf("https://www.cheapshark.com/redirect?dealID=%s", d.DealID),
+		})
+	}
+
+	return results, nil
 }
 
 // FilterCheapSharkDeals filters deals by rating, discount, and price thresholds.

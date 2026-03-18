@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,33 @@ import (
 	"github.com/prosolis/Pastel/internal/preflight"
 	"github.com/prosolis/Pastel/internal/watchlist"
 )
+
+const (
+	threadKeyGameDeals = "thread_game_deals"
+	threadKeyDLCDeals  = "thread_dlc_deals"
+	threadKeyEpicFree  = "thread_epic_free"
+)
+
+// getOrCreateThread retrieves an existing thread event ID from the DB,
+// or creates a new thread root message and stores its ID.
+func getOrCreateThread(db *database.DB, mx *matrix.Client, roomID, dbKey, title string) (string, error) {
+	eventID, err := db.GetConfig(dbKey)
+	if err == nil && eventID != "" {
+		return eventID, nil
+	}
+
+	eventID, err = mx.CreateThread(roomID, title)
+	if err != nil {
+		return "", err
+	}
+
+	if err := db.SetConfig(dbKey, eventID); err != nil {
+		slog.Warn("failed to persist thread event ID", "key", dbKey, "error", err)
+	}
+
+	slog.Info("created thread", "title", title, "event_id", eventID)
+	return eventID, nil
+}
 
 func main() {
 	checkFlag := flag.Bool("check", false, "Run preflight checks and exit")
@@ -75,8 +103,12 @@ func main() {
 	}
 	defer mx.Stop()
 
+	// Pre-fetch exchange rates
+	conv := currency.NewConverter()
+	conv.EnsureRates()
+
 	// Set up watchlist command handler and register DM event handler
-	cmdHandler := watchlist.NewCommandHandler(watchStore, mx)
+	cmdHandler := watchlist.NewCommandHandler(watchStore, mx, conv)
 	dealsRoomID := id.RoomID(cfg.MatrixDealsRoomID)
 	mx.RegisterMessageHandler(func(senderID id.UserID, roomID id.RoomID, body string) {
 		// Only handle DMs, not messages in the deals room
@@ -88,10 +120,6 @@ func main() {
 
 	// Start sync loop after handlers are registered
 	mx.StartSync()
-
-	// Pre-fetch exchange rates
-	conv := currency.NewConverter()
-	conv.EnsureRates()
 
 	// First-run: populate DB without posting
 	firstRunDone, _ := db.IsFirstRunDone()
@@ -294,6 +322,12 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 		}
 	}
 
+	threadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyGameDeals, "Game Deals")
+	if err != nil {
+		slog.Error("failed to get/create game deals thread", "error", err)
+		return
+	}
+
 	posted := 0
 	for _, d := range filtered {
 		already, err := db.IsPosted(d.DedupID)
@@ -306,7 +340,7 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 		}
 
 		msg := formatter.FormatCheapSharkDeal(d, conv)
-		if err := mx.SendDeal(cfg.MatrixDealsRoomID, msg.Plain, msg.HTML); err != nil {
+		if err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML); err != nil {
 			slog.Error("failed to send cheapshark deal", "title", d.Title, "error", err)
 			continue
 		}
@@ -345,6 +379,17 @@ func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv
 
 	filtered := deals.FilterITADDeals(itadDeals, cfg.MinDiscountPercent, cfg.MaxPriceUSD)
 
+	gameThreadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyGameDeals, "Game Deals")
+	if err != nil {
+		slog.Error("failed to get/create game deals thread", "error", err)
+		return
+	}
+	dlcThreadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyDLCDeals, "DLC Deals")
+	if err != nil {
+		slog.Error("failed to get/create dlc deals thread", "error", err)
+		return
+	}
+
 	posted := 0
 	for _, d := range filtered {
 		already, err := db.IsPosted(d.DedupID)
@@ -356,8 +401,13 @@ func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv
 			continue
 		}
 
+		threadID := gameThreadID
+		if strings.EqualFold(d.Type, "dlc") {
+			threadID = dlcThreadID
+		}
+
 		msg := formatter.FormatITADDeal(d, conv)
-		if err := mx.SendDeal(cfg.MatrixDealsRoomID, msg.Plain, msg.HTML); err != nil {
+		if err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML); err != nil {
 			slog.Error("failed to send itad deal", "title", d.Title, "error", err)
 			continue
 		}
@@ -389,6 +439,12 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 		return
 	}
 
+	threadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyEpicFree, "Epic Free Games")
+	if err != nil {
+		slog.Error("failed to get/create epic free games thread", "error", err)
+		return
+	}
+
 	posted := 0
 	for _, g := range games {
 		already, err := db.IsPosted(g.DedupID)
@@ -401,7 +457,7 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 		}
 
 		msg := formatter.FormatEpicFreeGame(g)
-		if err := mx.SendDeal(cfg.MatrixDealsRoomID, msg.Plain, msg.HTML); err != nil {
+		if err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML); err != nil {
 			slog.Error("failed to send epic game", "title", g.Title, "error", err)
 			continue
 		}
