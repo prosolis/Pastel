@@ -59,7 +59,11 @@ func PrintResults(results []Result) bool {
 }
 
 func checkMatrix(cfg *config.Config) Result {
-	client, err := matrix.New(cfg.MatrixHomeserverURL, cfg.MatrixBotUserID, cfg.MatrixBotAccessToken, "")
+	client, err := matrix.New(matrix.ClientConfig{
+		HomeserverURL: cfg.MatrixHomeserverURL,
+		UserID:        cfg.MatrixBotUserID,
+		AccessToken:   cfg.MatrixBotAccessToken,
+	})
 	if err != nil {
 		return Result{"Matrix", "fail", fmt.Sprintf("client error: %v", err)}
 	}

@@ -13,6 +13,7 @@ type Config struct {
 	MatrixHomeserverURL  string
 	MatrixBotUserID      string
 	MatrixBotAccessToken string
+	MatrixBotPassword    string
 	MatrixDealsRoomID    string
 	ITADAPIKey           string
 	DealSources          []string
@@ -42,6 +43,8 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.MatrixBotPassword = os.Getenv("MATRIX_BOT_PASSWORD")
+
 	c.MatrixDealsRoomID, err = require("MATRIX_DEALS_ROOM_ID")
 	if err != nil {
 		return nil, err

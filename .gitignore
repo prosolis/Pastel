@@ -1,5 +1,6 @@
 .env
 *.db
 *.db.bak
-pastel
-migrate
+device.json
+/pastel
+/migrate
