@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+.env
+*.db
+*.db.bak
+pastel
+migrate

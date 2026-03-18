@@ -1,0 +1,22 @@
+[Unit]
+Description=Pastel — Matrix gaming deals bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pastel
+ExecStart=/opt/pastel/pastel
+EnvironmentFile=/opt/pastel/.env
+Restart=on-failure
+RestartSec=10
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pastel
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

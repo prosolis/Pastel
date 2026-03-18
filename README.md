@@ -1,6 +1,6 @@
 # Pastel
 
-A Matrix bot that posts gaming deals and free game alerts to a specified Matrix room.
+A Matrix bot that posts gaming deals and free game alerts to a specified Matrix room, with a personal watchlist feature via DMs.
 
 Deals are sourced from PC/digital storefronts only (Steam, GOG, Humble Store, GreenManGaming, Epic Games Store) — universally accessible regardless of region.
 
@@ -15,19 +15,39 @@ CheapShark and IsThereAnyDeal can be used individually or together — configure
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and fill in your Matrix credentials and room ID
-2. Run with Docker:
+2. Build and run with Go 1.25+:
+
+```bash
+go build -tags goolm -o pastel ./cmd/pastel
+./pastel
+```
+
+Or run with Docker:
 
 ```bash
 docker build -t pastel .
 docker run --env-file .env -v pastel-data:/data pastel
 ```
 
-Or run directly with Python 3.12+:
+## Watchlist
 
-```bash
-pip install -r requirements.txt
-python -m gaming_deals_bot
-```
+Users can DM the bot to set up personal deal alerts. When a matching deal appears, the bot sends a DM notification.
+
+| Command | Description |
+|---|---|
+| `!search <game name>` | Search for current deals on a game |
+| `!watch <game name>` | Watch for deals on a game |
+| `!unwatch <# or game name>` | Remove a game from your watchlist |
+| `!extend <# or game name>` | Reset the 180-day expiry timer |
+| `!watchlist` | Show your numbered watchlist |
+| `!help` | List available commands |
+
+- Watches expire after **180 days** to prevent stale entries from accumulating
+- The bot sends a reminder **7 days before expiry** — reply with `!extend` to keep it
+- Matching uses normalized substring search, so watching "elden ring" will match "ELDEN RING: Shadow of the Erdtree"
+- Notifications are sent via encrypted DMs (E2EE)
+- `!unwatch` and `!extend` accept either the game name or a number from `!watchlist`
+- `!search` is rate-limited to 5 searches per 10 minutes per user
 
 ## Obtaining a Matrix Bot Access Token
 
@@ -62,37 +82,51 @@ All configuration is via environment variables (see `.env.example`):
 | `MATRIX_HOMESERVER_URL` | Yes | — | Matrix homeserver URL |
 | `MATRIX_BOT_USER_ID` | Yes | — | Bot's Matrix user ID |
 | `MATRIX_BOT_ACCESS_TOKEN` | Yes | — | Bot's access token |
+| `MATRIX_BOT_PASSWORD` | No | — | Bot's password (enables auto-refresh, cross-signing, and device persistence) |
 | `MATRIX_DEALS_ROOM_ID` | Yes | — | Room ID to post deals in |
 | `ITAD_API_KEY` | No | — | IsThereAnyDeal API key (required when `itad` is in `DEAL_SOURCES`, optional otherwise for historical low detection) |
 | `DEAL_SOURCES` | No | cheapshark | Comma-separated deal sources: `cheapshark`, `itad`, or `cheapshark,itad` |
-| `ITAD_COUNTRIES` | No | US | Comma-separated ISO 3166-1 alpha-2 country codes to fetch ITAD deals from (e.g. `US,CA,GB,DE`) |
-| `DEFAULT_CURRENCY` | No | USD | Primary display currency shown first in price strings |
-| `EXTRA_CURRENCIES` | No | CAD,EUR,GBP | Additional currencies shown after the default (comma-separated) |
-| `MATRIX_USE_THREADS` | No | false | Post deals into per-category threads (see Threads section below) |
+| `MIN_DEAL_RATING` | No | 8.0 | Minimum CheapShark deal rating (0-10) |
+| `MIN_DISCOUNT_PERCENT` | No | 50 | Minimum discount percentage |
+| `MAX_PRICE_USD` | No | 20 | Maximum sale price in USD |
 | `SEND_INTRO_MESSAGE` | No | false | Send "The deals must flow." to the room on startup |
 | `DATABASE_PATH` | No | deals.db | Path to SQLite database file |
 
-### Filtering
+## Deployment
 
-Each deal source has its own filter settings. Source-specific values take priority; when not set they fall back to the shared defaults.
+### systemd
 
-| Variable | Source | Default | Description |
-|---|---|---|---|
-| `CHEAPSHARK_MIN_DISCOUNT` | CheapShark | 50 | Minimum discount percentage |
-| `CHEAPSHARK_MIN_RATING` | CheapShark | 8.0 | Minimum deal rating (0-10, 0 = unrated allowed) |
-| `CHEAPSHARK_MAX_PRICE` | CheapShark | 20 | Maximum sale price (USD) |
-| `ITAD_MIN_DISCOUNT` | ITAD | 50 | Minimum discount percentage |
-| `ITAD_MAX_PRICE` | ITAD | 20 | Maximum sale price (USD, prices from other regions are converted) |
-| `ITAD_DEALS_LIMIT` | ITAD | 200 | Number of deals to fetch per country (max 200) |
-| `MIN_DISCOUNT_PERCENT` | Shared | 50 | Fallback minimum discount when source-specific value is not set |
-| `MAX_PRICE` | Shared | 20 | Fallback maximum price when source-specific value is not set |
+A service file is included for systemd deployments:
+
+```bash
+# Build and install
+go build -tags goolm -o pastel ./cmd/pastel
+sudo mkdir -p /opt/pastel
+sudo cp pastel /opt/pastel/
+sudo cp .env /opt/pastel/
+
+# Install and start the service
+sudo cp pastel.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now pastel
+```
+
+The service runs as a hardened unit with `ProtectSystem=strict`, restricting writes to `/opt/pastel` only. Adjust `WorkingDirectory` in the service file if deploying elsewhere.
+
+```bash
+# Check status
+sudo systemctl status pastel
+
+# View logs
+sudo journalctl -u pastel -f
+```
 
 ## Preflight Check
 
 Run `--check` to validate your configuration and test connectivity to all services before starting the bot:
 
 ```bash
-python -m gaming_deals_bot --check
+./pastel --check
 ```
 
 This verifies:
@@ -107,18 +141,15 @@ The command exits with code 0 on success and 1 on failure, so it works in CI and
 
 ## Threads
 
-When `MATRIX_USE_THREADS=true`, deals are posted inside per-category threads instead of directly into the room timeline. This keeps the room organized and lets users follow only the categories they care about.
+Deals are posted inside per-category threads to keep the room organized:
 
 | Thread | Content |
 |---|---|
-| 🎮 Game Deals | CheapShark deals + ITAD deals with type `game` |
-| 🧩 DLC Deals | ITAD deals with type `dlc` |
-| 🆓 Epic Free Games | Current and upcoming free games from the Epic Games Store |
-| 📦 Non-Game Deals | ITAD deals that aren't games or DLC (software, courses, etc.) |
+| Game Deals | CheapShark deals + ITAD deals with type `game` |
+| DLC Deals | ITAD deals with type `dlc` |
+| Epic Free Games | Current and upcoming free games from the Epic Games Store |
 
 Thread root messages are created automatically the first time a deal in that category appears. The root event IDs are stored in the database so subsequent deals are posted into the same threads.
-
-When threads are **disabled** (default), the bot behaves as before — all deals post directly to the room and non-game ITAD content is excluded.
 
 ## Behavior
 
@@ -126,5 +157,27 @@ When threads are **disabled** (default), the bot behaves as before — all deals
 - **Deduplication**: deals are tracked by game ID + timestamp; duplicates are never reposted
 - **Pruning**: deals older than 30 days are pruned from the database so they can be reposted if they return
 - **One message per deal**: each deal is posted individually so messages are independently linkable and dismissible
-- **Multi-currency pricing**: deal prices are shown in your configured currencies (default: USD, CAD, EUR, GBP) using live exchange rates from the [Frankfurter API](https://api.frankfurter.dev) (ECB data, no API key required). Set `DEFAULT_CURRENCY` to change the primary display currency and `EXTRA_CURRENCIES` for additional ones. Rates are cached and refreshed twice daily.
-- **Multi-country ITAD deals**: when using IsThereAnyDeal, deals can be fetched from multiple countries simultaneously via `ITAD_COUNTRIES` (e.g. `US,CA,GB,DE`). Deals are merged and deduplicated, with the first country in the list taking priority for duplicate games.
+- **Multi-currency pricing**: deal prices are shown in USD, CAD, EUR, and GBP using live exchange rates from the [Frankfurter API](https://api.frankfurter.dev) (ECB data, no API key required). Rates are cached and refreshed twice daily.
+- **E2EE support**: persistent crypto store via mautrix CryptoHelper for encrypted room and DM support
+- **Auto-refresh**: when `MATRIX_BOT_PASSWORD` is set, the bot persists device credentials and automatically re-authenticates if the token expires
+- **Cross-signing**: the bot bootstraps cross-signing on startup so its device is automatically verified
+- **Presence heartbeat**: keeps the bot shown as online in Matrix clients
+
+## Migrating from the Python Version
+
+The Go version is compatible with the existing Python `deals.db`. A migration script is included to convert timestamp formats and create the new watchlist table:
+
+```bash
+# Build the migration tool
+go build -o migrate ./cmd/migrate
+
+# Migrate (creates a .bak backup automatically)
+./migrate deals.db
+```
+
+The script:
+- Creates a backup at `deals.db.bak`
+- Converts Python's timestamp formats (`YYYY-MM-DD HH:MM:SS`, `YYYY-MM-DDTHH:MM:SS+00:00`) to RFC 3339
+- Creates the `watchlist` table
+
+All posted deals and the first-run flag carry over — no duplicate posts on switchover.
