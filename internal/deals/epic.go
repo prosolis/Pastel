@@ -3,6 +3,7 @@ package deals
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -88,6 +89,10 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 		if slug == "" && len(elem.CatalogNs.Mappings) > 0 {
 			slug = elem.CatalogNs.Mappings[0].PageSlug
 		}
+		if slug == "" {
+			slog.Warn("epic: skipping game with no slug", "title", elem.Title, "id", elem.ID)
+			continue
+		}
 		storeURL := fmt.Sprintf("https://store.epicgames.com/en-US/p/%s", slug)
 
 		// Check current free offers
@@ -96,8 +101,12 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 				if offer.DiscountSetting.DiscountPercentage != 0 {
 					continue
 				}
-				start, _ := time.Parse(time.RFC3339, offer.StartDate)
-				end, _ := time.Parse(time.RFC3339, offer.EndDate)
+				start, errS := time.Parse(time.RFC3339, offer.StartDate)
+				end, errE := time.Parse(time.RFC3339, offer.EndDate)
+				if errS != nil || errE != nil {
+					slog.Warn("epic: failed to parse offer dates", "title", elem.Title, "start", offer.StartDate, "end", offer.EndDate)
+					continue
+				}
 
 				if start.After(now) || end.Before(now) {
 					continue
@@ -109,7 +118,7 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 					Desc:     elem.Description,
 					URL:      storeURL,
 					Upcoming: false,
-					DedupID:  fmt.Sprintf("epic-%s", elem.ID),
+					DedupID:  fmt.Sprintf("epic-current-%s", elem.ID),
 				}
 				if !end.IsZero() {
 					game.EndDate = &end
@@ -131,7 +140,7 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 					Desc:     elem.Description,
 					URL:      storeURL,
 					Upcoming: true,
-					DedupID:  fmt.Sprintf("epic-%s", elem.ID),
+					DedupID:  fmt.Sprintf("epic-upcoming-%s", elem.ID),
 				}
 				if offer.EndDate != "" {
 					if end, err := time.Parse(time.RFC3339, offer.EndDate); err == nil {

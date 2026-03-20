@@ -166,6 +166,12 @@ func LookupHistoricalLows(apiKey string, steamAppIDs []string) (map[string]bool,
 			continue
 		}
 
+		if resp.StatusCode != http.StatusOK {
+			slog.Warn("itad lookup returned non-200", "appid", appID, "status", resp.StatusCode)
+			resp.Body.Close()
+			continue
+		}
+
 		var lookup struct {
 			Found bool `json:"found"`
 			Game  struct {
@@ -195,13 +201,20 @@ func LookupHistoricalLows(apiKey string, steamAppIDs []string) (map[string]bool,
 		itadToSteam[itadID] = steamID
 	}
 
-	body, _ := json.Marshal(gameIDs)
+	body, err := json.Marshal(gameIDs)
+	if err != nil {
+		return result, fmt.Errorf("itad overview marshal failed: %w", err)
+	}
 	url := fmt.Sprintf("https://api.isthereanydeal.com/games/overview/v2?key=%s", apiKey)
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return result, fmt.Errorf("itad overview request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return result, fmt.Errorf("itad overview returned status %d", resp.StatusCode)
+	}
 
 	var overview struct {
 		Prices []struct {

@@ -228,7 +228,7 @@ func main() {
 func populateInitialState(cfg *config.Config, db *database.DB) {
 	// Record CheapShark deals without posting
 	if cfg.HasSource("cheapshark") {
-		rawDeals, err := deals.FetchCheapSharkDeals(cfg.MaxPriceUSD, 10)
+		rawDeals, err := deals.FetchCheapSharkDeals(cfg.MaxPriceUSD, 60)
 		if err != nil {
 			slog.Warn("first run: cheapshark fetch failed", "error", err)
 		} else {
@@ -290,7 +290,7 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 	slog.Debug("checking cheapshark deals")
 	conv.EnsureRates()
 
-	rawDeals, err := deals.FetchCheapSharkDeals(cfg.MaxPriceUSD, 10)
+	rawDeals, err := deals.FetchCheapSharkDeals(cfg.MaxPriceUSD, 60)
 	if err != nil {
 		slog.Error("cheapshark fetch failed", "error", err)
 		return
