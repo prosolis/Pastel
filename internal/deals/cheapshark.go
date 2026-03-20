@@ -49,12 +49,12 @@ type cheapSharkRaw struct {
 
 // FetchCheapSharkDeals fetches deals from CheapShark API.
 func FetchCheapSharkDeals(maxPrice float64, pageSize int) ([]CheapSharkDeal, error) {
-	url := fmt.Sprintf(
+	reqURL := fmt.Sprintf(
 		"https://www.cheapshark.com/api/1.0/deals?storeID=1,7,11,23&upperPrice=%d&sortBy=recent&desc=1&pageSize=%d",
 		int(maxPrice), pageSize,
 	)
 
-	resp, err := http.Get(url)
+	resp, err := http.Get(reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("cheapshark request failed: %w", err)
 	}
@@ -71,10 +71,16 @@ func FetchCheapSharkDeals(maxPrice float64, pageSize int) ([]CheapSharkDeal, err
 
 	var deals []CheapSharkDeal
 	for _, d := range raw {
-		sale, _ := strconv.ParseFloat(d.SalePrice, 64)
-		normal, _ := strconv.ParseFloat(d.NormalPrice, 64)
-		savings, _ := strconv.ParseFloat(d.Savings, 64)
+		sale, err1 := strconv.ParseFloat(d.SalePrice, 64)
+		normal, err2 := strconv.ParseFloat(d.NormalPrice, 64)
+		savings, err3 := strconv.ParseFloat(d.Savings, 64)
 		rating, _ := strconv.ParseFloat(d.DealRating, 64)
+
+		if err1 != nil || err2 != nil || err3 != nil {
+			slog.Warn("cheapshark: skipping deal with unparseable prices", "title", d.Title,
+				"salePrice", d.SalePrice, "normalPrice", d.NormalPrice, "savings", d.Savings)
+			continue
+		}
 
 		storeName := storeNames[d.StoreID]
 		if storeName == "" {
@@ -103,12 +109,12 @@ func FetchCheapSharkDeals(maxPrice float64, pageSize int) ([]CheapSharkDeal, err
 
 // SearchCheapSharkDeals searches for current deals matching a title query.
 func SearchCheapSharkDeals(query string, maxResults int) ([]CheapSharkDeal, error) {
-	url := fmt.Sprintf(
+	reqURL := fmt.Sprintf(
 		"https://www.cheapshark.com/api/1.0/deals?storeID=1,7,11,23&sortBy=savings&desc=1&pageSize=%d&title=%s",
 		maxResults, url.QueryEscape(query),
 	)
 
-	resp, err := http.Get(url)
+	resp, err := http.Get(reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("cheapshark search failed: %w", err)
 	}
@@ -125,9 +131,14 @@ func SearchCheapSharkDeals(query string, maxResults int) ([]CheapSharkDeal, erro
 
 	var results []CheapSharkDeal
 	for _, d := range raw {
-		sale, _ := strconv.ParseFloat(d.SalePrice, 64)
-		normal, _ := strconv.ParseFloat(d.NormalPrice, 64)
-		savings, _ := strconv.ParseFloat(d.Savings, 64)
+		sale, err1 := strconv.ParseFloat(d.SalePrice, 64)
+		normal, err2 := strconv.ParseFloat(d.NormalPrice, 64)
+		savings, err3 := strconv.ParseFloat(d.Savings, 64)
+
+		if err1 != nil || err2 != nil || err3 != nil {
+			slog.Warn("cheapshark: skipping search result with unparseable prices", "title", d.Title)
+			continue
+		}
 
 		if savings <= 0 {
 			continue
