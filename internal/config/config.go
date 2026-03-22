@@ -63,9 +63,9 @@ func Load() (*Config, error) {
 		}
 	}
 
-	c.MinDealRating = envFloat("MIN_DEAL_RATING", 8.0)
-	c.MinDiscountPercent = envInt("MIN_DISCOUNT_PERCENT", 50)
-	c.MaxPriceUSD = envFloat("MAX_PRICE_USD", 20)
+	c.MinDealRating = envFloat("MIN_DEAL_RATING", 7.0)
+	c.MinDiscountPercent = envInt("MIN_DISCOUNT_PERCENT", 20)
+	c.MaxPriceUSD = envFloat("MAX_PRICE_USD", 45)
 	c.DatabasePath = envStr("DATABASE_PATH", "deals.db")
 
 	intro := strings.ToLower(os.Getenv("SEND_INTRO_MESSAGE"))

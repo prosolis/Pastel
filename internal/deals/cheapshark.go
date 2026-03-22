@@ -47,13 +47,49 @@ type cheapSharkRaw struct {
 	SteamAppID string `json:"steamAppID"`
 }
 
-// FetchCheapSharkDeals fetches deals from CheapShark API.
+// FetchCheapSharkDeals fetches deals from CheapShark API using multiple
+// sort strategies to ensure both new and high-value deals are captured.
 func FetchCheapSharkDeals(maxPrice float64, pageSize int) ([]CheapSharkDeal, error) {
-	reqURL := fmt.Sprintf(
-		"https://www.cheapshark.com/api/1.0/deals?storeID=1,7,11,23&upperPrice=%d&sortBy=recent&desc=1&pageSize=%d",
-		int(maxPrice), pageSize,
-	)
+	// Fetch recent deals and top-rated deals, then merge.
+	// CheapShark's desc=0 (default) returns highest values first for savings/DealRating.
+	queries := []string{
+		fmt.Sprintf(
+			"https://www.cheapshark.com/api/1.0/deals?storeID=1,7,11,23&upperPrice=%d&sortBy=recent&pageSize=%d",
+			int(maxPrice), pageSize,
+		),
+		fmt.Sprintf(
+			"https://www.cheapshark.com/api/1.0/deals?storeID=1,7,11,23&upperPrice=%d&sortBy=DealRating&pageSize=%d",
+			int(maxPrice), pageSize,
+		),
+	}
 
+	seen := make(map[string]bool)
+	var allDeals []CheapSharkDeal
+
+	for _, reqURL := range queries {
+		fetched, err := fetchCheapSharkPage(reqURL)
+		if err != nil {
+			slog.Warn("cheapshark: fetch failed for query", "url", reqURL, "error", err)
+			continue
+		}
+		for _, d := range fetched {
+			if seen[d.DedupID] {
+				continue
+			}
+			seen[d.DedupID] = true
+			allDeals = append(allDeals, d)
+		}
+	}
+
+	if len(allDeals) == 0 {
+		return nil, fmt.Errorf("cheapshark: all queries failed or returned no results")
+	}
+
+	return allDeals, nil
+}
+
+// fetchCheapSharkPage fetches and parses a single CheapShark API page.
+func fetchCheapSharkPage(reqURL string) ([]CheapSharkDeal, error) {
 	resp, err := http.Get(reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("cheapshark request failed: %w", err)
