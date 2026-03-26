@@ -132,20 +132,25 @@ func checkEpic() Result {
 }
 
 func checkFrankfurter() Result {
-	resp, err := http.Get("https://api.frankfurter.dev/v1/latest?base=USD&symbols=CAD,EUR,GBP")
+	resp, err := http.Get("https://api.frankfurter.dev/v2/rates?base=USD&quotes=CAD,EUR,GBP")
 	if err != nil {
 		return Result{"Frankfurter", "fail", fmt.Sprintf("request failed: %v", err)}
 	}
 	defer resp.Body.Close()
 
-	var result struct {
-		Rates map[string]float64 `json:"rates"`
+	var result []struct {
+		Quote string  `json:"quote"`
+		Rate  float64 `json:"rate"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || len(result.Rates) == 0 {
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || len(result) == 0 {
 		return Result{"Frankfurter", "fail", "no rates returned"}
 	}
 
-	return Result{"Frankfurter", "pass", fmt.Sprintf("rates: %v", result.Rates)}
+	rates := make(map[string]float64, len(result))
+	for _, r := range result {
+		rates[r.Quote] = r.Rate
+	}
+	return Result{"Frankfurter", "pass", fmt.Sprintf("rates: %v", rates)}
 }
 
 func checkITAD(cfg *config.Config) Result {

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	apiURL   = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=CAD,EUR,GBP"
+	apiURL   = "https://api.frankfurter.dev/v2/rates?base=USD&quotes=CAD,EUR,GBP"
 	cacheTTL = 12 * time.Hour
 )
 
@@ -45,14 +45,18 @@ func (c *Converter) fetchRates() error {
 		return fmt.Errorf("frankfurter API returned status %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Rates map[string]float64 `json:"rates"`
+	var result []struct {
+		Quote string  `json:"quote"`
+		Rate  float64 `json:"rate"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return err
 	}
 
-	c.rates = result.Rates
+	c.rates = make(map[string]float64, len(result))
+	for _, r := range result {
+		c.rates[r.Quote] = r.Rate
+	}
 	c.lastFetched = time.Now()
 	return nil
 }
