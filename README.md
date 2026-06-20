@@ -49,6 +49,94 @@ Users can DM the bot to set up personal deal alerts. When a matching deal appear
 - `!unwatch` and `!extend` accept either the game name or a number from `!watchlist`
 - `!search` is rate-limited to 5 searches per 10 minutes per user
 
+## Web UI
+
+Pastel ships with an optional, self-contained web interface — a cute, animated
+pastel-themed gallery where users browse, search, and filter the current deals
+and manage their watchlist from the browser. It is **disabled by default**.
+
+The frontend is hand-written HTML/CSS/JS embedded into the binary via Go's
+`embed` — there is no Node toolchain or build step, and the whole app remains a
+single binary. The web server runs in-process as a goroutine alongside the bot
+and shares the same SQLite database.
+
+### Enabling it
+
+Set `WEB_ENABLED=true` and choose a listen address:
+
+```bash
+WEB_ENABLED=true
+WEB_LISTEN_ADDR=127.0.0.1:8080
+```
+
+With no OIDC configured, the UI runs **read-only**: anyone who can reach it can
+browse deals, but there is no sign-in and watchlists cannot be edited.
+
+### Authentication (Authentik OIDC)
+
+Watchlist editing requires sign-in via **Authentik** using OpenID Connect
+(Authorization Code + PKCE). To enable it:
+
+1. In Authentik, create an **OAuth2/OpenID Provider** and an **Application**.
+2. Set the provider's **Redirect URI** to `{WEB_PUBLIC_URL}/auth/callback`
+   (e.g. `https://deals.example.com/auth/callback`).
+3. Copy the issuer URL, client ID, and client secret into your `.env`:
+
+   ```bash
+   WEB_PUBLIC_URL=https://deals.example.com
+   OIDC_ISSUER_URL=https://auth.example.com/application/o/pastel/
+   OIDC_CLIENT_ID=...
+   OIDC_CLIENT_SECRET=...
+   ```
+
+When a user signs in, their Matrix ID is derived as
+`@{preferred_username}:{MATRIX_SERVER_NAME}`, which keys their watchlist so the
+web and DM (`!watch`) views stay in sync. `MATRIX_SERVER_NAME` defaults to the
+domain of `MATRIX_BOT_USER_ID`. This relies on Authentik usernames matching
+Matrix usernames (Authentik users were mass-imported from Matrix, so they do for
+almost everyone); a user whose names differ will see an empty/incorrect
+watchlist on the web — they can keep using the DM commands instead.
+
+### Web configuration
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `WEB_ENABLED` | No | false | Enable the web server |
+| `WEB_LISTEN_ADDR` | No | `:8080` | Address the web server binds to |
+| `WEB_PUBLIC_URL` | For OIDC | — | Public URL the UI is served from; OAuth redirect is `{WEB_PUBLIC_URL}/auth/callback`. Session cookies are marked `Secure` when this is https |
+| `MATRIX_SERVER_NAME` | No | domain of `MATRIX_BOT_USER_ID` | Homeserver domain used to derive Matrix IDs from OIDC logins |
+| `OIDC_ISSUER_URL` | For login | — | Authentik OIDC issuer URL (blank = read-only UI) |
+| `OIDC_CLIENT_ID` | For login | — | OIDC client ID |
+| `OIDC_CLIENT_SECRET` | For login | — | OIDC client secret |
+
+### Running behind a reverse proxy
+
+OIDC login requires HTTPS, so in production the UI should sit behind a reverse
+proxy (nginx, Caddy, Traefik, …) that terminates TLS and forwards to
+`WEB_LISTEN_ADDR`. Bind the web server to localhost (`127.0.0.1:8080`) so it is
+only reachable through the proxy, and set `WEB_PUBLIC_URL` to the external HTTPS
+URL. The redirect URI registered in Authentik must exactly match
+`{WEB_PUBLIC_URL}/auth/callback`.
+
+Example Caddy config:
+
+```caddy
+deals.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Example nginx location block:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
 ## Obtaining a Matrix Bot Access Token
 
 1. **Create a bot account** on your homeserver (e.g. via Element: register a new account like `@dealsbot:example.com`).
@@ -112,6 +200,12 @@ sudo systemctl enable --now pastel
 ```
 
 The service runs as a hardened unit with `ProtectSystem=strict`, restricting writes to `/opt/pastel` only. Adjust `WorkingDirectory` in the service file if deploying elsewhere.
+
+If the [web UI](#web-ui) is enabled, keep `WEB_LISTEN_ADDR` bound to localhost
+(e.g. `127.0.0.1:8080`) and expose it through a TLS-terminating reverse proxy
+rather than opening the port publicly. The bundled hardening (`ProtectSystem`,
+`NoNewPrivileges`, `PrivateTmp`) does not restrict outbound or inbound network
+access, so no changes to the unit are needed to serve the UI.
 
 ```bash
 # Check status

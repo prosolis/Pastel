@@ -108,9 +108,15 @@ document is the source of truth for decisions and progress.
     so heading rules carry no `font-weight` bump (avoids faux-bold synthesis). Chosen by
     the user after a headless-chromium render of 6 candidate pairings.
   - `go build`/`vet`/`test ./internal/web` all green; `node --check app.js` clean.
-- [ ] **M6 — Docs + deploy**
-  - `.env.example` + README web section, systemd unit exposure/port notes,
-    reverse-proxy guidance for `WEB_PUBLIC_URL` behind Authentik.
+- [x] **M6 — Docs + deploy** *(done)*
+  - `.env.example`: added a "Web UI (optional)" block documenting `WEB_ENABLED`,
+    `WEB_LISTEN_ADDR` (defaulted to `127.0.0.1:8080` for proxy use), `WEB_PUBLIC_URL`,
+    `MATRIX_SERVER_NAME`, and the three `OIDC_*` vars, with read-only-without-OIDC note.
+  - README: new "## Web UI" section (single-binary/embed rationale, enabling,
+    Authentik OIDC setup steps + redirect URI, identity-mapping caveat, web config
+    table, reverse-proxy guidance with Caddy + nginx examples). systemd section gained
+    a note to bind localhost + proxy and that the hardening doesn't block networking.
+  - `go build -tags goolm ./...` + `go vet ./internal/web/...` green.
 
 ## API shapes (target)
 
