@@ -265,6 +265,7 @@ func populateInitialState(cfg *config.Config, db *database.DB) {
 			for _, d := range filtered {
 				_ = db.MarkPosted(d.DedupID, "cheapshark", d.Title)
 			}
+			saveCheapSharkDeals(db, filtered)
 			slog.Info("first run: populated cheapshark deals", "count", len(filtered))
 		}
 	}
@@ -279,6 +280,7 @@ func populateInitialState(cfg *config.Config, db *database.DB) {
 			for _, d := range filtered {
 				_ = db.MarkPosted(d.DedupID, "itad", d.Title)
 			}
+			saveITADDeals(db, filtered)
 			slog.Info("first run: populated itad deals", "count", len(filtered))
 		}
 	}
@@ -351,6 +353,10 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 		}
 	}
 
+	// Record full deal data for the web interface (all current deals, not just
+	// newly-posted ones).
+	saveCheapSharkDeals(db, filtered)
+
 	threadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyGameDeals, "Game Deals")
 	if err != nil {
 		slog.Error("failed to get/create game deals thread", "error", err)
@@ -390,6 +396,9 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 	if err := db.PruneOldDeals(30); err != nil {
 		slog.Warn("failed to prune old deals", "error", err)
 	}
+	if err := db.PruneDealsTable(30); err != nil {
+		slog.Warn("failed to prune old web deals", "error", err)
+	}
 }
 
 func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv *currency.Converter, ws *watchlist.Store) {
@@ -407,6 +416,9 @@ func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv
 	}
 
 	filtered := deals.FilterITADDeals(itadDeals, cfg.MinDiscountPercent, cfg.MaxPriceUSD)
+
+	// Record full deal data for the web interface.
+	saveITADDeals(db, filtered)
 
 	gameThreadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyGameDeals, "Game Deals")
 	if err != nil {
@@ -457,6 +469,9 @@ func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv
 	if err := db.PruneOldDeals(30); err != nil {
 		slog.Warn("failed to prune old deals", "error", err)
 	}
+	if err := db.PruneDealsTable(30); err != nil {
+		slog.Warn("failed to prune old web deals", "error", err)
+	}
 }
 
 func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, ws *watchlist.Store) {
@@ -467,6 +482,9 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 		slog.Error("epic fetch failed", "error", err)
 		return
 	}
+
+	// Record full deal data for the web interface.
+	saveEpicFreeGames(db, games)
 
 	threadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyEpicFree, "Epic Free Games")
 	if err != nil {
