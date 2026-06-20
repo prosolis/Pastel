@@ -75,9 +75,10 @@ func TestSaveAndQueryDeals(t *testing.T) {
 		t.Fatalf("search filter: total=%d err=%v deals=%+v", total, err, hk)
 	}
 
-	// Facets.
-	sources, stores, err := db.DealFacets()
-	if err != nil || len(sources) != 2 || len(stores) != 2 {
-		t.Fatalf("facets: sources=%v stores=%v err=%v", sources, stores, err)
+	// Facets. Seeded deals don't set a category, so SaveDeal defaults them all
+	// to "games" — one distinct category.
+	categories, sources, stores, err := db.DealFacets()
+	if err != nil || len(categories) != 1 || len(sources) != 2 || len(stores) != 2 {
+		t.Fatalf("facets: categories=%v sources=%v stores=%v err=%v", categories, sources, stores, err)
 	}
 }

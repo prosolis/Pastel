@@ -53,6 +53,7 @@ func (s *Server) handleDeals(w http.ResponseWriter, r *http.Request) {
 
 	filter := database.DealFilter{
 		Query:       q.Get("q"),
+		Categories:  csv(q.Get("category")),
 		Sources:     csv(q.Get("source")),
 		Stores:      csv(q.Get("store")),
 		Kinds:       csv(q.Get("kind")),
@@ -86,13 +87,17 @@ func (s *Server) handleDeals(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleFacets serves GET /api/facets — the distinct sources and stores.
+// handleFacets serves GET /api/facets — the distinct categories, sources, and
+// stores present in the data, used to build the category nav and filter UI.
 func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
-	sources, stores, err := s.db.DealFacets()
+	categories, sources, stores, err := s.db.DealFacets()
 	if err != nil {
 		slog.Error("web: facets failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load facets"})
 		return
+	}
+	if categories == nil {
+		categories = []string{}
 	}
 	if sources == nil {
 		sources = []string{}
@@ -101,8 +106,9 @@ func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
 		stores = []string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"sources": sources,
-		"stores":  stores,
+		"categories": categories,
+		"sources":    sources,
+		"stores":     stores,
 	})
 }
 

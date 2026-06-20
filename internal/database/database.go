@@ -122,6 +122,7 @@ func (d *DB) migrate() error {
 		CREATE TABLE IF NOT EXISTS deals (
 			dedup_id         TEXT PRIMARY KEY,
 			source           TEXT NOT NULL,
+			category         TEXT NOT NULL DEFAULT 'games',
 			kind             TEXT NOT NULL,
 			title            TEXT NOT NULL,
 			title_normalized TEXT NOT NULL,
@@ -152,6 +153,35 @@ func (d *DB) migrate() error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
 	`)
+	if err != nil {
+		return err
+	}
+
+	// Additive column migrations for databases created before a column existed
+	// (the CREATE TABLE statements above only take effect on a fresh install).
+	// Each step is idempotent so migrate() is safe to run on every startup.
+	if err := d.addColumnIfMissing("deals", "category", "category TEXT NOT NULL DEFAULT 'games'"); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(`CREATE INDEX IF NOT EXISTS idx_deals_category ON deals(category)`); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addColumnIfMissing adds a column to an existing table when it is absent, so
+// schema additions reach databases created before the column existed. SQLite's
+// ALTER TABLE ... ADD COLUMN errors if the column is already there, so we guard
+// on pragma_table_info first.
+func (d *DB) addColumnIfMissing(table, column, ddl string) error {
+	var n int
+	if err := d.db.Get(&n, "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := d.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + ddl)
 	return err
 }
 
@@ -216,7 +246,8 @@ func (d *DB) PruneOldDeals(days int) error {
 type Deal struct {
 	DedupID     string     `db:"dedup_id" json:"id"`
 	Source      string     `db:"source" json:"source"`
-	Kind        string     `db:"kind" json:"kind"` // game | dlc | free
+	Category    string     `db:"category" json:"category"` // games | music | clothing | ...
+	Kind        string     `db:"kind" json:"kind"`         // game | dlc | free | deal
 	Title       string     `db:"title" json:"title"`
 	TitleNorm   string     `db:"title_normalized" json:"-"`
 	Store       string     `db:"store" json:"store"`
@@ -235,13 +266,16 @@ type Deal struct {
 // SaveDeal upserts a deal's full data. The first insert sets posted_at; later
 // upserts refresh the mutable fields (price, discount, flags) and updated_at.
 func (d *DB) SaveDeal(deal Deal) error {
+	if deal.Category == "" {
+		deal.Category = "games"
+	}
 	_, err := d.db.NamedExec(`
 		INSERT INTO deals (
-			dedup_id, source, kind, title, title_normalized, store,
+			dedup_id, source, category, kind, title, title_normalized, store,
 			sale_price, normal_price, discount, rating, url,
 			is_hist_low, is_free, upcoming, expires_at
 		) VALUES (
-			:dedup_id, :source, :kind, :title, :title_normalized, :store,
+			:dedup_id, :source, :category, :kind, :title, :title_normalized, :store,
 			:sale_price, :normal_price, :discount, :rating, :url,
 			:is_hist_low, :is_free, :upcoming, :expires_at
 		)
@@ -281,6 +315,7 @@ func ClampDealLimit(limit int) int {
 // DealFilter describes the query the web interface wants to run against deals.
 type DealFilter struct {
 	Query       string
+	Categories  []string
 	Sources     []string
 	Stores      []string
 	Kinds       []string
@@ -302,6 +337,12 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	if q := strings.TrimSpace(f.Query); q != "" {
 		where = append(where, "title_normalized LIKE ?")
 		args = append(args, "%"+normalize.Text(q)+"%")
+	}
+	if len(f.Categories) > 0 {
+		where = append(where, "category IN ("+placeholders(len(f.Categories))+")")
+		for _, c := range f.Categories {
+			args = append(args, c)
+		}
 	}
 	if len(f.Sources) > 0 {
 		where = append(where, "source IN ("+placeholders(len(f.Sources))+")")
@@ -348,7 +389,7 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 
 	order := orderClause(f.Sort)
 	limit := ClampDealLimit(f.Limit)
-	query := "SELECT dedup_id, source, kind, title, title_normalized, store, " +
+	query := "SELECT dedup_id, source, category, kind, title, title_normalized, store, " +
 		"sale_price, normal_price, discount, rating, url, is_hist_low, is_free, " +
 		"upcoming, expires_at, posted_at FROM deals" + clause + order + " LIMIT ? OFFSET ?"
 	args = append(args, limit, f.Offset)
@@ -360,16 +401,19 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	return deals, total, nil
 }
 
-// DealFacets returns the distinct sources and stores currently present, for
-// building the filter UI.
-func (d *DB) DealFacets() (sources []string, stores []string, err error) {
+// DealFacets returns the distinct categories, sources, and stores currently
+// present, for building the filter/navigation UI.
+func (d *DB) DealFacets() (categories []string, sources []string, stores []string, err error) {
+	if err = d.db.Select(&categories, "SELECT DISTINCT category FROM deals WHERE category IS NOT NULL AND category != '' ORDER BY category"); err != nil {
+		return nil, nil, nil, err
+	}
 	if err = d.db.Select(&sources, "SELECT DISTINCT source FROM deals ORDER BY source"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err = d.db.Select(&stores, "SELECT DISTINCT store FROM deals WHERE store IS NOT NULL AND store != '' ORDER BY store"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return sources, stores, nil
+	return categories, sources, stores, nil
 }
 
 // WebSession is an authenticated web session backed by the web_sessions table.
@@ -453,4 +497,3 @@ func placeholders(n int) string {
 	}
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
-

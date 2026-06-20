@@ -182,6 +182,13 @@ func main() {
 	}
 	checkEpicFreeGames(cfg, db, mx, watchStore)
 
+	// Reddit's initial scrape runs in the background: it is rate-limited and can
+	// take a minute across several subreddits, which we don't want blocking the
+	// bot's startup. The ticker below keeps it fresh thereafter.
+	if cfg.HasSource("reddit") {
+		go checkReddit(cfg, db)
+	}
+
 	// Run initial expiry check
 	checkWatchlistExpiry(watchStore, mx)
 
@@ -230,6 +237,21 @@ func main() {
 			}
 		}
 	}()
+
+	if cfg.HasSource("reddit") {
+		go func() {
+			ticker := time.NewTicker(3 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ticker.C:
+					checkReddit(cfg, db)
+				}
+			}
+		}()
+	}
 
 	// Watchlist expiry check — daily
 	go func() {
@@ -542,6 +564,26 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 
 	if posted > 0 {
 		slog.Info("posted epic games", "count", posted)
+	}
+}
+
+// checkReddit scrapes the configured Reddit deal communities and records them
+// for the web gallery. Unlike the game sources it does not post to Matrix —
+// these multi-category deals (music, clothing, …) live only in the web UI.
+func checkReddit(cfg *config.Config, db *database.DB) {
+	slog.Debug("checking reddit deals", "feeds", len(cfg.RedditFeeds))
+
+	items, err := deals.FetchRedditDeals(cfg.RedditFeeds)
+	if err != nil {
+		slog.Error("reddit fetch failed", "error", err)
+		return
+	}
+
+	saveRedditDeals(db, items)
+	slog.Info("recorded reddit deals", "count", len(items))
+
+	if err := db.PruneDealsTable(30); err != nil {
+		slog.Warn("failed to prune old web deals", "error", err)
 	}
 }
 

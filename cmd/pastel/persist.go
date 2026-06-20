@@ -18,6 +18,7 @@ func saveCheapSharkDeals(db *database.DB, filtered []deals.CheapSharkDeal) {
 		deal := database.Deal{
 			DedupID:     d.DedupID,
 			Source:      "cheapshark",
+			Category:    "games",
 			Kind:        "game",
 			Title:       d.Title,
 			TitleNorm:   watchlist.Normalize(d.Title),
@@ -46,6 +47,7 @@ func saveITADDeals(db *database.DB, filtered []deals.ITADDeal) {
 		deal := database.Deal{
 			DedupID:     d.DedupID,
 			Source:      "itad",
+			Category:    "games",
 			Kind:        kind,
 			Title:       d.Title,
 			TitleNorm:   watchlist.Normalize(d.Title),
@@ -64,12 +66,37 @@ func saveITADDeals(db *database.DB, filtered []deals.ITADDeal) {
 	}
 }
 
+// saveRedditDeals records deals scraped from Reddit deal communities. These
+// populate the web gallery's non-game categories (music, clothing, …); they are
+// intentionally not posted to Matrix, which stays focused on game deals.
+func saveRedditDeals(db *database.DB, items []deals.RedditDeal) {
+	for _, d := range items {
+		deal := database.Deal{
+			DedupID:   d.DedupID,
+			Source:    "reddit",
+			Category:  d.Category,
+			Kind:      "deal",
+			Title:     d.Title,
+			TitleNorm: watchlist.Normalize(d.Title),
+			Store:     d.Store,
+			SalePrice: d.Price,
+			Discount:  d.Discount,
+			URL:       d.URL,
+			IsFree:    database.Bool(d.IsFree),
+		}
+		if err := db.SaveDeal(deal); err != nil {
+			slog.Warn("failed to save reddit deal for web", "title", d.Title, "error", err)
+		}
+	}
+}
+
 // saveEpicFreeGames records the full data of the given Epic free games.
 func saveEpicFreeGames(db *database.DB, games []deals.EpicFreeGame) {
 	for _, g := range games {
 		deal := database.Deal{
 			DedupID:   g.DedupID,
 			Source:    "epic",
+			Category:  "games",
 			Kind:      "free",
 			Title:     g.Title,
 			TitleNorm: watchlist.Normalize(g.Title),

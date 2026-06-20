@@ -205,6 +205,21 @@ function boingMascot() {
 const PAGE_SIZE = 48;
 let offset = 0;
 let total = 0;
+// The category nav's current selection. "" means "All categories".
+let activeCategory = "";
+
+// Display metadata for known categories; unknown ones fall back to a
+// title-cased label with a generic tag icon, so new verticals still render.
+const CATEGORY_META = {
+  games: { label: "Games", icon: "🎮" },
+  tech: { label: "Tech", icon: "💻" },
+  music: { label: "Music", icon: "🎸" },
+  clothing: { label: "Clothing", icon: "👕" },
+  general: { label: "Deals", icon: "🛍️" },
+};
+function catMeta(c) {
+  return CATEGORY_META[c] || { label: c.charAt(0).toUpperCase() + c.slice(1), icon: "🏷️" };
+}
 
 // Auth + watchlist state. `watched` maps a normalized game name -> watch id so
 // cards can render the right toggle and remove entries without a round-trip.
@@ -230,6 +245,7 @@ function currentParams() {
   const p = new URLSearchParams();
   const q = $("q").value.trim();
   if (q) p.set("q", q);
+  if (activeCategory) p.set("category", activeCategory);
   if ($("source").value) p.set("source", $("source").value);
   if ($("store").value) p.set("store", $("store").value);
   if ($("min_discount").value) p.set("min_discount", $("min_discount").value);
@@ -424,11 +440,39 @@ async function loadFacets() {
   try {
     const res = await fetch("/api/facets");
     const data = await res.json();
+    buildCatNav(data.categories);
     fillSelect($("source"), data.sources);
     fillSelect($("store"), data.stores);
   } catch (err) {
     console.error("failed to load facets", err);
   }
+}
+
+// buildCatNav paints the topbar category pills from the live facet list, with a
+// leading "All" pill. It is data-driven, so adding a new vertical (a new
+// category in the data) makes a new pill appear with no frontend change.
+function buildCatNav(categories) {
+  const nav = $("catnav");
+  if (!nav) return;
+  nav.innerHTML = "";
+  const cats = ["", ...(categories || [])]; // "" = All
+  for (const c of cats) {
+    const btn = document.createElement("button");
+    btn.className = "cat-pill" + (c === activeCategory ? " active" : "");
+    btn.dataset.cat = c;
+    btn.textContent = c === "" ? "✨ All" : `${catMeta(c).icon} ${catMeta(c).label}`;
+    btn.addEventListener("click", () => selectCategory(c));
+    nav.appendChild(btn);
+  }
+}
+
+function selectCategory(c) {
+  if (activeCategory === c) return;
+  activeCategory = c;
+  for (const b of document.querySelectorAll(".cat-pill")) {
+    b.classList.toggle("active", b.dataset.cat === c);
+  }
+  loadDeals(true);
 }
 
 function fillSelect(sel, values) {
