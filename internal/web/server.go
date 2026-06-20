@@ -7,6 +7,7 @@ import (
 	"embed"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"sync"
 	"time"
@@ -18,6 +19,12 @@ import (
 
 //go:embed static
 var staticFS embed.FS
+
+func init() {
+	// Go's built-in MIME table doesn't know AVIF, and a minimal deploy host may
+	// lack /etc/mime.types, so register it explicitly for correct Content-Type.
+	_ = mime.AddExtensionType(".avif", "image/avif")
+}
 
 // Server holds the dependencies the web handlers need.
 type Server struct {

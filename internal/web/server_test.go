@@ -107,3 +107,19 @@ func TestStaticIndexServed(t *testing.T) {
 		t.Fatalf("expected content-type for index")
 	}
 }
+
+func TestMascotAvifServed(t *testing.T) {
+	s := newTestServer(t)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/pastel.avif", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/avif" {
+		t.Fatalf("content-type = %q, want image/avif", ct)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatalf("empty avif body")
+	}
+}

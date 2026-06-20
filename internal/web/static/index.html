@@ -4,11 +4,32 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pastel — Game Deals</title>
+  <meta name="theme-color" content="#ffe1f1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mochiy+Pop+One&family=Nunito:wght@400;600;700;800&display=swap">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <!-- Animated WebGL pastel background (canvas-2D + CSS fallbacks in app.js/style.css). -->
+  <canvas id="bg" class="bg-canvas" aria-hidden="true"></canvas>
+  <div class="bg-fallback" aria-hidden="true">
+    <span class="blob b1"></span><span class="blob b2"></span>
+    <span class="blob b3"></span><span class="blob b4"></span>
+  </div>
+  <!-- Confetti pieces are spawned into here on a watch. -->
+  <div id="confetti" class="confetti-layer" aria-hidden="true"></div>
+
   <header class="topbar">
-    <h1 class="logo">🍬 Pastel</h1>
+    <h1 class="logo">
+      <span class="mascot" id="mascot" role="img" aria-label="Pastel mascot">
+        <picture>
+          <source srcset="/pastel.avif" type="image/avif">
+          <img src="/pastel.webp" alt="Pastel mascot" width="48" height="49" draggable="false">
+        </picture>
+      </span>
+      <span class="logo-text">Pastel</span>
+    </h1>
     <div class="topbar-right">
       <button id="watchlist-toggle" class="linkbtn ghost" hidden>★ Watchlist</button>
       <div class="me" id="me"></div>
@@ -25,7 +46,13 @@
       <button type="submit" class="linkbtn">Add</button>
     </form>
     <ul id="watch-list" class="watch-list"></ul>
-    <div id="watch-empty" class="watch-empty" hidden>Nothing watched yet 🫧 Add a game above or tap ★ on a deal.</div>
+    <div id="watch-empty" class="watch-empty" hidden>
+      <picture>
+        <source srcset="/pastel.avif" type="image/avif">
+        <img class="watch-empty-art" src="/pastel.webp" alt="" width="96" height="98" draggable="false">
+      </picture>
+      <p>Nothing watched yet 🫧<br>Add a game above or tap ★ on a deal.</p>
+    </div>
   </aside>
   <div class="drawer-scrim" id="drawer-scrim" hidden></div>
 
@@ -76,7 +103,13 @@
         <span id="count" class="count"></span>
       </div>
       <div id="grid" class="grid"></div>
-      <div id="empty" class="empty" hidden>No deals match your filters yet 🫧</div>
+      <div id="empty" class="empty" hidden>
+        <picture>
+          <source srcset="/pastel.avif" type="image/avif">
+          <img class="empty-art" src="/pastel.webp" alt="" width="132" height="134" draggable="false">
+        </picture>
+        <p>No deals match your filters yet 🫧</p>
+      </div>
       <button id="more" class="more" hidden>Load more</button>
     </section>
   </main>

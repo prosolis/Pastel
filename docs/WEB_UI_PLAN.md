@@ -84,13 +84,30 @@ document is the source of truth for decisions and progress.
     state; server stays source of truth. `watched` Map (normName→id) drives toggles.
   - Tests: `internal/web/watchlist_test.go` (add/list/remove-by-id, remove-by-game,
     requires-auth for all 3 verbs, rejects-empty). All pass; `go build`/`vet` clean.
-- [ ] **M5 — The "hella cute" pass**
-  - Animated gradient background, candy cards, discount-burst badges, springy
-    hover, staggered Web-Animations entrance, confetti on watch, mascot, skeleton
-    loaders, cute empty state, responsive, reduced-motion fallback.
-  - **User directive (2026-06-19): visual prettiness is the top priority — compute
-    cost is explicitly NOT a concern, and "nothing is off limits" including WebGL.**
-    Go maximal on the aesthetic here.
+- [x] **M5 — The "hella cute" pass** *(done)*
+  - **WebGL animated background** (`startWebGLBackground`): full-screen domain-warped
+    pastel fragment shader. Graceful fallback ladder: WebGL → animated canvas-2D
+    drifting orbs (`start2DBackground`) → CSS `.bg-fallback` blurred blobs. Disabled
+    under `prefers-reduced-motion`.
+  - Candy cards: gradient rim (mask trick), hover gloss sweep, springy lift; discount
+    badge `pop`, gold historical-low `shine`, free-green gradient.
+  - Confetti (`burstConfetti`, Web Animations API) fires from the toggled ★ button /
+    drawer add field; mascot does a squash-stretch `boing`. Mascot = the real Pastel
+    chibi (`pastel.avif`, AVIF-encoded from `pastel.webp` via avifenc -q88; `<picture>`
+    with WebP fallback) — bobbing + clickable in the topbar, plus the deals empty state
+    and watchlist empty state. `.avif` MIME registered in a `server.go` `init()` (Go's
+    builtin table omits it). Test: `TestMascotAvifServed`.
+  - Skeleton shimmer cards while a query is in flight (`renderSkeletons`); staggered
+    spring entrance on results (`playEntrance`). Glassmorphism topbar/filters/drawer,
+    slide-in drawer, focus rings.
+  - Reduced-motion media query neutralises all animation; `REDUCE_MOTION` guards the
+    JS effects too. Responsive single-column under 760px.
+  - Typography: **Mochiy Pop One** (logo + card titles + prices + drawer heading) +
+    **Nunito** (body) via Google Fonts (`display=swap`, system-ui fallback) — only
+    external runtime dependency; page is fully usable offline. Mochiy is single-weight,
+    so heading rules carry no `font-weight` bump (avoids faux-bold synthesis). Chosen by
+    the user after a headless-chromium render of 6 candidate pairings.
+  - `go build`/`vet`/`test ./internal/web` all green; `node --check app.js` clean.
 - [ ] **M6 — Docs + deploy**
   - `.env.example` + README web section, systemd unit exposure/port notes,
     reverse-proxy guidance for `WEB_PUBLIC_URL` behind Authentik.
