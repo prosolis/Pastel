@@ -106,17 +106,38 @@ function fillSelect(sel, values) {
 }
 
 async function loadMe() {
+  const me = $("me");
   try {
     const res = await fetch("/api/me");
-    const me = await res.json();
-    $("me").textContent = me.authenticated
-      ? `Hi, ${me.displayName || me.userId} ✨`
-      : me.oidcEnabled
-      ? "Not signed in"
-      : "";
+    const data = await res.json();
+    me.innerHTML = "";
+    if (data.authenticated) {
+      const who = document.createElement("span");
+      who.textContent = `Hi, ${data.displayName || data.userId} ✨ `;
+      const out = document.createElement("button");
+      out.className = "linkbtn";
+      out.textContent = "Sign out";
+      out.addEventListener("click", logout);
+      me.append(who, out);
+    } else if (data.oidcEnabled) {
+      const a = document.createElement("a");
+      a.className = "linkbtn";
+      a.href = "/auth/login";
+      a.textContent = "Sign in";
+      me.append(a);
+    }
   } catch (err) {
     console.error("failed to load me", err);
   }
+}
+
+async function logout() {
+  try {
+    await fetch("/auth/logout", { method: "POST" });
+  } catch (err) {
+    console.error("logout failed", err);
+  }
+  loadMe();
 }
 
 // Debounce filter changes so typing doesn't hammer the API.

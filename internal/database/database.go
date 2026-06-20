@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"strings"
@@ -337,6 +338,59 @@ func (d *DB) DealFacets() (sources []string, stores []string, err error) {
 		return nil, nil, err
 	}
 	return sources, stores, nil
+}
+
+// WebSession is an authenticated web session backed by the web_sessions table.
+type WebSession struct {
+	Token       string    `db:"token"`
+	UserID      string    `db:"user_id"`
+	DisplayName string    `db:"display_name"`
+	CreatedAt   time.Time `db:"created_at"`
+	ExpiresAt   time.Time `db:"expires_at"`
+}
+
+// CreateSession stores a new web session.
+func (d *DB) CreateSession(token, userID, displayName string, expiresAt time.Time) error {
+	_, err := d.db.Exec(
+		`INSERT INTO web_sessions (token, user_id, display_name, expires_at) VALUES (?, ?, ?, ?)`,
+		token, userID, displayName, expiresAt.UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+// GetSession returns the session for a token if it exists and has not expired.
+// Returns (nil, nil) when there is no valid session for the token.
+func (d *DB) GetSession(token string) (*WebSession, error) {
+	// Compare against a Go-formatted RFC3339 timestamp rather than SQLite's
+	// CURRENT_TIMESTAMP: expires_at is stored as RFC3339 (with a "T"), which
+	// does not order correctly against CURRENT_TIMESTAMP's "YYYY-MM-DD HH:MM:SS".
+	now := time.Now().UTC().Format(time.RFC3339)
+	var s WebSession
+	err := d.db.Get(&s,
+		`SELECT token, user_id, display_name, created_at, expires_at
+		 FROM web_sessions WHERE token = ? AND expires_at > ?`,
+		token, now,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &s, nil
+}
+
+// DeleteSession removes a session by token.
+func (d *DB) DeleteSession(token string) error {
+	_, err := d.db.Exec("DELETE FROM web_sessions WHERE token = ?", token)
+	return err
+}
+
+// PruneSessions removes expired web sessions.
+func (d *DB) PruneSessions() error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := d.db.Exec("DELETE FROM web_sessions WHERE expires_at <= ?", now)
+	return err
 }
 
 // PruneDealsTable removes display deals older than the given number of days.

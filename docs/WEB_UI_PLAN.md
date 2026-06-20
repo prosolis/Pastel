@@ -53,12 +53,25 @@ document is the source of truth for decisions and progress.
   - Wired into `cmd/pastel/main.go`: web server started in a goroutine under a
     cancelable context when `WEB_ENABLED`; cancelled on shutdown signal.
   - `internal/web/server_test.go`: httptest coverage for all 3 endpoints + static index.
-- [ ] **M3 — Authentik OIDC**
-  - `oidc.NewProvider` discovery (lazy/non-fatal if it fails — browsing still works).
-  - `GET /auth/login` (state + PKCE, state cookie), `GET /auth/callback`
-    (verify id_token, derive Matrix ID, create `web_sessions` row, set httponly cookie),
-    `POST /auth/logout`. Session middleware. Session methods on `DB`
-    (CreateSession/GetSession/DeleteSession/PruneSessions).
+- [x] **M3 — Authentik OIDC** *(done)*
+  - DB session methods (`internal/database/database.go`): `WebSession` struct,
+    `CreateSession`, `GetSession`, `DeleteSession`, `PruneSessions`. **Gotcha fixed:**
+    `expires_at` is stored RFC3339 (`T` separator) which does NOT order correctly
+    against SQLite `CURRENT_TIMESTAMP` (`YYYY-MM-DD HH:MM:SS`), so `GetSession`
+    compares against a Go-formatted RFC3339 `now` instead (same pattern watchlist
+    already uses in `PurgeExpired`).
+  - `internal/web/auth.go`: lazy, non-fatal `oidc.NewProvider` discovery
+    (`ensureAuth`, guarded by `authMu`); `GET /auth/login` (state cookie + PKCE
+    S256 via `oauth2.GenerateVerifier`), `GET /auth/callback` (state check, code
+    exchange w/ verifier, id_token verify, derive `@{preferred_username}:{MATRIX_SERVER_NAME}`,
+    create session, set httponly session cookie), `POST /auth/logout`.
+    `currentSession` helper + `requireAuth` middleware (for M4). Cookies get the
+    Secure flag when `WEB_PUBLIC_URL` is https.
+  - `/api/me` now reports real auth state. Session pruning runs hourly in `Run`.
+  - Frontend: sign in / sign out control in the topbar.
+  - Deps added: `github.com/coreos/go-oidc/v3`, `golang.org/x/oauth2`.
+  - Tests: `internal/web/auth_test.go` (authed /api/me, expired session, logout,
+    login-unavailable-without-OIDC, requireAuth rejects anonymous).
 - [ ] **M4 — Watchlist API + UI integration**
   - Auth-gated `GET/POST/DELETE /api/watchlist` backed by the existing
     `watchlist.Store` (keyed by the derived Matrix user ID).

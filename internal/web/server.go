@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/prosolis/Pastel/internal/config"
@@ -24,6 +25,9 @@ type Server struct {
 	db    *database.DB
 	watch *watchlist.Store
 	mux   *http.ServeMux
+
+	authMu sync.Mutex     // guards lazy authenticator initialization
+	auth   *authenticator // nil until OIDC discovery succeeds
 }
 
 // New constructs a web server wired to the shared database and watchlist store.
@@ -38,6 +42,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/deals", s.handleDeals)
 	s.mux.HandleFunc("GET /api/facets", s.handleFacets)
 	s.mux.HandleFunc("GET /api/me", s.handleMe)
+
+	// Authentik OIDC (Authorization Code + PKCE).
+	s.mux.HandleFunc("GET /auth/login", s.handleLogin)
+	s.mux.HandleFunc("GET /auth/callback", s.handleCallback)
+	s.mux.HandleFunc("POST /auth/logout", s.handleLogout)
 
 	// Static frontend. Serve the embedded "static" directory at the root.
 	sub, err := fs.Sub(staticFS, "static")
@@ -68,6 +77,25 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("web server shutdown error", "error", err)
+		}
+	}()
+
+	// Periodically prune expired web sessions.
+	go func() {
+		if err := s.db.PruneSessions(); err != nil {
+			slog.Warn("web: prune sessions failed", "error", err)
+		}
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.db.PruneSessions(); err != nil {
+					slog.Warn("web: prune sessions failed", "error", err)
+				}
+			}
 		}
 	}()
 

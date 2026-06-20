@@ -30,6 +30,17 @@ body {
 
 .logo { margin: 0; font-size: 1.6rem; }
 .me { color: var(--muted); font-size: 0.9rem; }
+.linkbtn {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 6px 14px;
+  border-radius: 999px;
+  text-decoration: none;
+  cursor: pointer;
+}
 
 .layout {
   display: grid;

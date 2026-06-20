@@ -103,13 +103,19 @@ func (s *Server) handleFacets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMe serves GET /api/me. Until OIDC lands (M3) this always reports an
-// unauthenticated session; the frontend uses it to know whether auth is wired.
+// handleMe serves GET /api/me, reporting the current auth state plus whether
+// OIDC login is available at all.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"authenticated": false,
 		"userId":        "",
 		"displayName":   "",
-		"oidcEnabled":   s.cfg.OIDCIssuerURL != "" && s.cfg.OIDCClientID != "",
-	})
+		"oidcEnabled":   s.oidcConfigured(),
+	}
+	if sess := s.currentSession(r); sess != nil {
+		resp["authenticated"] = true
+		resp["userId"] = sess.UserID
+		resp["displayName"] = sess.DisplayName
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
