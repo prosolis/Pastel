@@ -29,15 +29,41 @@ const (
 	threadKeyEpicFree  = "thread_epic_free"
 )
 
-// getOrCreateThread retrieves an existing thread event ID from the DB,
-// or creates a new thread root message and stores its ID.
+// currentWeekKey returns an ISO year-week identifier (e.g. "2026-W25") for the
+// given time. Threads roll over when this value changes from week to week.
+func currentWeekKey(t time.Time) string {
+	year, week := t.ISOWeek()
+	return fmt.Sprintf("%d-W%02d", year, week)
+}
+
+// weekTitle returns a human-friendly thread title that includes the Monday
+// of the given week, e.g. "Game Deals (week of Jun 16, 2026)".
+func weekTitle(base string, t time.Time) string {
+	// Walk back to Monday so every thread in a week shares the same label.
+	monday := t
+	for monday.Weekday() != time.Monday {
+		monday = monday.AddDate(0, 0, -1)
+	}
+	return fmt.Sprintf("%s (week of %s)", base, monday.Format("Jan 2, 2006"))
+}
+
+// getOrCreateThread retrieves the current week's thread event ID from the DB,
+// or creates a fresh thread root message when a new week has begun. Posting a
+// new thread each week keeps individual threads shallow enough for Matrix
+// clients to load.
 func getOrCreateThread(db *database.DB, mx *matrix.Client, roomID, dbKey, title string) (string, error) {
+	weekKey := currentWeekKey(time.Now())
+	weekDBKey := dbKey + "_week"
+
 	eventID, err := db.GetConfig(dbKey)
 	if err == nil && eventID != "" {
-		return eventID, nil
+		storedWeek, _ := db.GetConfig(weekDBKey)
+		if storedWeek == weekKey {
+			return eventID, nil
+		}
 	}
 
-	eventID, err = mx.CreateThread(roomID, title)
+	eventID, err = mx.CreateThread(roomID, weekTitle(title, time.Now()))
 	if err != nil {
 		return "", err
 	}
@@ -45,8 +71,11 @@ func getOrCreateThread(db *database.DB, mx *matrix.Client, roomID, dbKey, title 
 	if err := db.SetConfig(dbKey, eventID); err != nil {
 		slog.Warn("failed to persist thread event ID", "key", dbKey, "error", err)
 	}
+	if err := db.SetConfig(weekDBKey, weekKey); err != nil {
+		slog.Warn("failed to persist thread week", "key", weekDBKey, "error", err)
+	}
 
-	slog.Info("created thread", "title", title, "event_id", eventID)
+	slog.Info("created thread", "title", title, "week", weekKey, "event_id", eventID)
 	return eventID, nil
 }
 
