@@ -72,14 +72,25 @@ document is the source of truth for decisions and progress.
   - Deps added: `github.com/coreos/go-oidc/v3`, `golang.org/x/oauth2`.
   - Tests: `internal/web/auth_test.go` (authed /api/me, expired session, logout,
     login-unavailable-without-OIDC, requireAuth rejects anonymous).
-- [ ] **M4 — Watchlist API + UI integration**
-  - Auth-gated `GET/POST/DELETE /api/watchlist` backed by the existing
-    `watchlist.Store` (keyed by the derived Matrix user ID).
-  - "★ Watch" button on cards; watchlist drawer/panel.
+- [x] **M4 — Watchlist API + UI integration** *(done)*
+  - DB/store: added `watchlist.Store.RemoveWatchByID(userID, id)` (user-scoped delete).
+  - `internal/web/watchlist.go`: auth-gated (`requireAuth`) `GET /api/watchlist`
+    (`{watches:[{id,gameName,expiresAt}]}`), `POST /api/watchlist` (JSON `{game}`,
+    `MaxBytesReader` 4 KiB, returns `{added}`), `DELETE /api/watchlist?id=` or
+    `?game=` (returns `{removed}`). Keyed by `sess.UserID`. Routes wired in `server.go`.
+  - Frontend: `★ Watch`/`★ Watching` toggle on cards (only when authed), watchlist
+    drawer (topbar `★ Watchlist` button → slide-in panel w/ add field + remove
+    buttons + scrim). JS `normalize()` mirrors `watchlist.Normalize` for optimistic
+    state; server stays source of truth. `watched` Map (normName→id) drives toggles.
+  - Tests: `internal/web/watchlist_test.go` (add/list/remove-by-id, remove-by-game,
+    requires-auth for all 3 verbs, rejects-empty). All pass; `go build`/`vet` clean.
 - [ ] **M5 — The "hella cute" pass**
   - Animated gradient background, candy cards, discount-burst badges, springy
     hover, staggered Web-Animations entrance, confetti on watch, mascot, skeleton
     loaders, cute empty state, responsive, reduced-motion fallback.
+  - **User directive (2026-06-19): visual prettiness is the top priority — compute
+    cost is explicitly NOT a concern, and "nothing is off limits" including WebGL.**
+    Go maximal on the aesthetic here.
 - [ ] **M6 — Docs + deploy**
   - `.env.example` + README web section, systemd unit exposure/port notes,
     reverse-proxy guidance for `WEB_PUBLIC_URL` behind Authentik.

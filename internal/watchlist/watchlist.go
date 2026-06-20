@@ -82,6 +82,20 @@ func (s *Store) RemoveWatch(userID, gameName string) (bool, error) {
 	return rows > 0, nil
 }
 
+// RemoveWatchByID removes a watch by its row ID, scoped to the owning user so
+// one user cannot delete another's entry. Returns false if not found.
+func (s *Store) RemoveWatchByID(userID string, id int64) (bool, error) {
+	result, err := s.db.Exec(
+		"DELETE FROM watchlist WHERE id = ? AND user_id = ?",
+		id, userID,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, _ := result.RowsAffected()
+	return rows > 0, nil
+}
+
 // ExtendWatch resets the expiry to 180 days from now. Returns false if not found.
 func (s *Store) ExtendWatch(userID, gameName string) (bool, error) {
 	normalized := Normalize(gameName)

@@ -9,8 +9,25 @@
 <body>
   <header class="topbar">
     <h1 class="logo">🍬 Pastel</h1>
-    <div class="me" id="me"></div>
+    <div class="topbar-right">
+      <button id="watchlist-toggle" class="linkbtn ghost" hidden>★ Watchlist</button>
+      <div class="me" id="me"></div>
+    </div>
   </header>
+
+  <aside class="drawer" id="drawer" hidden aria-hidden="true">
+    <div class="drawer-head">
+      <h2>★ Your watchlist</h2>
+      <button id="drawer-close" class="linkbtn ghost" aria-label="Close">✕</button>
+    </div>
+    <form id="watch-add" class="watch-add">
+      <input type="text" id="watch-input" placeholder="Add a game to watch…" autocomplete="off">
+      <button type="submit" class="linkbtn">Add</button>
+    </form>
+    <ul id="watch-list" class="watch-list"></ul>
+    <div id="watch-empty" class="watch-empty" hidden>Nothing watched yet 🫧 Add a game above or tap ★ on a deal.</div>
+  </aside>
+  <div class="drawer-scrim" id="drawer-scrim" hidden></div>
 
   <main class="layout">
     <aside class="filters">

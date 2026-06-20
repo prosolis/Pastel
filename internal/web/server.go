@@ -43,6 +43,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/facets", s.handleFacets)
 	s.mux.HandleFunc("GET /api/me", s.handleMe)
 
+	// Auth-gated watchlist API.
+	s.mux.HandleFunc("GET /api/watchlist", s.requireAuth(s.handleWatchlistGet))
+	s.mux.HandleFunc("POST /api/watchlist", s.requireAuth(s.handleWatchlistPost))
+	s.mux.HandleFunc("DELETE /api/watchlist", s.requireAuth(s.handleWatchlistDelete))
+
 	// Authentik OIDC (Authorization Code + PKCE).
 	s.mux.HandleFunc("GET /auth/login", s.handleLogin)
 	s.mux.HandleFunc("GET /auth/callback", s.handleCallback)
