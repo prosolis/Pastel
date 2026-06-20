@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -82,12 +83,23 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 			continue
 		}
 
-		slug := elem.ProductSlug
+		// Prefer the canonical product-page slug from catalogNs mappings.
+		// productSlug often carries a "/home" suffix (or other path) that
+		// breaks the URL, and urlSlug is frequently an opaque GUID hash that
+		// does not resolve to a product page, so use those only as fallbacks.
+		var slug string
+		if len(elem.CatalogNs.Mappings) > 0 {
+			slug = elem.CatalogNs.Mappings[0].PageSlug
+		}
+		if slug == "" {
+			slug = elem.ProductSlug
+		}
 		if slug == "" {
 			slug = elem.URLSlug
 		}
-		if slug == "" && len(elem.CatalogNs.Mappings) > 0 {
-			slug = elem.CatalogNs.Mappings[0].PageSlug
+		// Strip any trailing path (e.g. "my-game/home") to the base slug.
+		if i := strings.IndexByte(slug, '/'); i >= 0 {
+			slug = slug[:i]
 		}
 		if slug == "" {
 			slog.Warn("epic: skipping game with no slug", "title", elem.Title, "id", elem.ID)
