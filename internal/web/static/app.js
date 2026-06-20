@@ -217,7 +217,7 @@ const CATEGORY_META = {
   clothing: { label: "Clothing", icon: "👕" },
   home: { label: "Home", icon: "🏠" },
   sports: { label: "Sports", icon: "🏃" },
-  general: { label: "Deals", icon: "🛍️" },
+  general: { label: "Random shit", icon: "🛍️" },
 };
 function catMeta(c) {
   return CATEGORY_META[c] || { label: c.charAt(0).toUpperCase() + c.slice(1), icon: "🏷️" };
