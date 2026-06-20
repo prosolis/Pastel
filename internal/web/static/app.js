@@ -25,26 +25,67 @@ function startWebGLBackground(canvas) {
   if (!gl) return false;
 
   const vs = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
-  // Layered, domain-warped sine field tinted between three pastel stops.
+  // Flowing pastel aurora: iterated domain-warped value-noise (fbm) ribbons,
+  // tinted across a five-stop candy palette, with a handful of drifting bokeh
+  // orbs floating over the top for that soft, alive, "hella cute" feel.
   const fs = `
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+    #else
     precision mediump float;
+    #endif
     uniform vec2 res; uniform float t;
-    vec3 pink = vec3(1.0, 0.78, 0.90);
-    vec3 lilac = vec3(0.78, 0.72, 1.0);
-    vec3 mint  = vec3(0.74, 0.96, 0.90);
-    float wave(vec2 u, float s){
-      return sin(u.x*s + t*0.30) * cos(u.y*s - t*0.24)
-           + sin((u.x+u.y)*s*0.7 + t*0.18);
+
+    vec3 pink  = vec3(1.00, 0.71, 0.86);
+    vec3 rose  = vec3(1.00, 0.55, 0.78);
+    vec3 lilac = vec3(0.72, 0.66, 1.00);
+    vec3 sky   = vec3(0.63, 0.86, 1.00);
+    vec3 mint  = vec3(0.66, 0.97, 0.85);
+
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float noise(vec2 p){
+      vec2 i = floor(p), f = fract(p);
+      vec2 u = f*f*(3.0 - 2.0*f);
+      return mix(mix(hash(i + vec2(0.0,0.0)), hash(i + vec2(1.0,0.0)), u.x),
+                 mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), u.x), u.y);
     }
+    float fbm(vec2 p){
+      float s = 0.0, a = 0.5;
+      for (int i = 0; i < 5; i++){ s += a * noise(p); p *= 2.02; a *= 0.5; }
+      return s;
+    }
+
     void main(){
-      vec2 u = gl_FragCoord.xy / res;
-      vec2 w = u + 0.12 * vec2(wave(u, 3.0), wave(u.yx, 3.4));
-      float a = wave(w, 4.0) * 0.5 + 0.5;
-      float b = wave(w * 1.7 + 1.3, 2.5) * 0.5 + 0.5;
-      vec3 col = mix(pink, lilac, smoothstep(0.0, 1.0, a));
-      col = mix(col, mint, smoothstep(0.35, 1.0, b) * 0.5);
-      col = mix(col, vec3(1.0), 0.18); // lift toward white for that soft pastel haze
-      gl_FragColor = vec4(col, 0.92);
+      vec2 uv = gl_FragCoord.xy / res;
+      float asp = res.x / res.y;
+      vec2 p = vec2(uv.x * asp, uv.y) * 1.6;
+      float tt = t * 0.07;
+
+      // Two rounds of domain warping → soft swirling aurora structure.
+      vec2 q = vec2(fbm(p + vec2(0.0, tt)), fbm(p + vec2(5.2, tt + 1.3)));
+      vec2 r = vec2(fbm(p + 2.2*q + vec2(1.7, 9.2) + tt),
+                    fbm(p + 2.2*q + vec2(8.3, 2.8) - tt));
+      float f = fbm(p + 2.6*r);
+
+      vec3 col = mix(lilac, pink, smoothstep(0.10, 0.70, f));
+      col = mix(col, sky,  smoothstep(0.60, 1.10, length(r)) * 0.75);
+      col = mix(col, mint, smoothstep(0.28, 0.04, f) * 0.45);
+      col = mix(col, rose, smoothstep(0.62, 0.92, f) * 0.70);
+
+      // Drifting bokeh orbs — soft additive glow, gently looping paths.
+      float bok = 0.0;
+      for (int i = 0; i < 5; i++){
+        float fi = float(i);
+        vec2 c = vec2(0.5 + 0.43 * sin(t * 0.06 + fi * 2.1),
+                      0.5 + 0.41 * cos(t * 0.05 + fi * 1.7));
+        c.x *= asp;
+        float d = length(vec2(uv.x * asp, uv.y) - c);
+        bok += smoothstep(0.16, 0.0, d) * 0.09;
+      }
+      col += bok;
+
+      col = mix(col, vec3(1.0), 0.08); // a whisper of haze, not a whiteout
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), 0.97);
     }`;
 
   function compile(type, src) {
@@ -93,9 +134,10 @@ function start2DBackground(canvas) {
   const ctx = canvas.getContext("2d");
   if (!ctx) { canvas.style.display = "none"; return; }
   const orbs = [
-    { x: 0.15, y: 0.2, r: 0.5, c: "255,193,227", px: 0.00006, py: 0.00004 },
-    { x: 0.85, y: 0.25, r: 0.45, c: "201,182,255", px: -0.00005, py: 0.00006 },
-    { x: 0.5, y: 0.85, r: 0.5, c: "191,230,255", px: 0.00004, py: -0.00005 },
+    { x: 0.15, y: 0.2, r: 0.55, c: "255,150,205", px: 0.00006, py: 0.00004 },
+    { x: 0.85, y: 0.25, r: 0.5, c: "176,150,255", px: -0.00005, py: 0.00006 },
+    { x: 0.5, y: 0.85, r: 0.55, c: "150,210,255", px: 0.00004, py: -0.00005 },
+    { x: 0.7, y: 0.55, r: 0.4, c: "150,235,200", px: -0.00003, py: -0.00006 },
   ];
   function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
   resize();
