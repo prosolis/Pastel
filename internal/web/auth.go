@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 const (
 	sessionCookie  = "pastel_session"
 	stateCookie    = "pastel_oauth_state"
+	nonceCookie    = "pastel_oauth_nonce"
 	verifierCookie = "pastel_oauth_verifier"
 	sessionTTL     = 7 * 24 * time.Hour
 )
@@ -103,12 +105,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	nonce, err := randToken(24)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	verifier := oauth2.GenerateVerifier()
 
 	s.setShortCookie(w, stateCookie, state)
+	s.setShortCookie(w, nonceCookie, nonce)
 	s.setShortCookie(w, verifierCookie, verifier)
 
-	url := auth.oauth.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier))
+	url := auth.oauth.AuthCodeURL(state, oauth2.AccessTypeOffline,
+		oauth2.S256ChallengeOption(verifier), oidc.Nonce(nonce))
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -121,10 +130,16 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CSRF: the state in the query must match the state cookie.
+	// CSRF: the state in the query must match the state cookie (constant-time).
 	stateC, err := r.Cookie(stateCookie)
-	if err != nil || stateC.Value == "" || stateC.Value != r.URL.Query().Get("state") {
+	if err != nil || stateC.Value == "" ||
+		subtle.ConstantTimeCompare([]byte(stateC.Value), []byte(r.URL.Query().Get("state"))) != 1 {
 		http.Error(w, "invalid state", http.StatusBadRequest)
+		return
+	}
+	nonceC, err := r.Cookie(nonceCookie)
+	if err != nil || nonceC.Value == "" {
+		http.Error(w, "missing nonce", http.StatusBadRequest)
 		return
 	}
 	verifierC, err := r.Cookie(verifierCookie)
@@ -134,6 +149,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	// One-shot cookies: clear them now.
 	s.clearCookie(w, stateCookie)
+	s.clearCookie(w, nonceCookie)
 	s.clearCookie(w, verifierCookie)
 
 	ctx := r.Context()
@@ -153,6 +169,12 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("web: id_token verification failed", "error", err)
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+	// Bind the ID token to this login attempt: its nonce must match the one we
+	// issued, defeating ID-token replay.
+	if subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(nonceC.Value)) != 1 {
+		http.Error(w, "invalid nonce", http.StatusBadRequest)
 		return
 	}
 
@@ -202,6 +224,10 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 // handleLogout deletes the current session and clears the cookie.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !s.sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+		return
+	}
 	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
 		if err := s.db.DeleteSession(c.Value); err != nil {
 			slog.Warn("web: failed to delete session", "error", err)
@@ -237,6 +263,22 @@ func (s *Server) requireAuth(next func(http.ResponseWriter, *http.Request, *data
 		}
 		next(w, r, sess)
 	}
+}
+
+// requireAuthMutation wraps a state-changing session handler with auth, a
+// same-origin (CSRF) check, and per-user rate limiting.
+func (s *Server) requireAuthMutation(next func(http.ResponseWriter, *http.Request, *database.WebSession)) http.HandlerFunc {
+	return s.requireAuth(func(w http.ResponseWriter, r *http.Request, sess *database.WebSession) {
+		if !s.sameOrigin(r) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+			return
+		}
+		if !s.mutateLimiter.allow(sess.UserID) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limited; slow down"})
+			return
+		}
+		next(w, r, sess)
+	})
 }
 
 func (s *Server) setShortCookie(w http.ResponseWriter, name, value string) {

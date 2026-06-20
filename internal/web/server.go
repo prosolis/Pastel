@@ -9,12 +9,19 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
 	"github.com/prosolis/Pastel/internal/config"
 	"github.com/prosolis/Pastel/internal/database"
 	"github.com/prosolis/Pastel/internal/watchlist"
+)
+
+const (
+	// mutationLimit caps state-changing watchlist requests per user per window.
+	mutationLimit  = 30
+	mutationWindow = time.Minute
 )
 
 //go:embed static
@@ -35,11 +42,19 @@ type Server struct {
 
 	authMu sync.Mutex     // guards lazy authenticator initialization
 	auth   *authenticator // nil until OIDC discovery succeeds
+
+	mutateLimiter *rateLimiter // per-user limit on state-changing requests
 }
 
 // New constructs a web server wired to the shared database and watchlist store.
 func New(cfg *config.Config, db *database.DB, watch *watchlist.Store) *Server {
-	s := &Server{cfg: cfg, db: db, watch: watch, mux: http.NewServeMux()}
+	s := &Server{
+		cfg:           cfg,
+		db:            db,
+		watch:         watch,
+		mux:           http.NewServeMux(),
+		mutateLimiter: newRateLimiter(mutationLimit, mutationWindow),
+	}
 	s.routes()
 	return s
 }
@@ -50,10 +65,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/facets", s.handleFacets)
 	s.mux.HandleFunc("GET /api/me", s.handleMe)
 
-	// Auth-gated watchlist API.
+	// Auth-gated watchlist API. Mutations additionally get a same-origin (CSRF)
+	// check and per-user rate limiting.
 	s.mux.HandleFunc("GET /api/watchlist", s.requireAuth(s.handleWatchlistGet))
-	s.mux.HandleFunc("POST /api/watchlist", s.requireAuth(s.handleWatchlistPost))
-	s.mux.HandleFunc("DELETE /api/watchlist", s.requireAuth(s.handleWatchlistDelete))
+	s.mux.HandleFunc("POST /api/watchlist", s.requireAuthMutation(s.handleWatchlistPost))
+	s.mux.HandleFunc("DELETE /api/watchlist", s.requireAuthMutation(s.handleWatchlistDelete))
 
 	// Authentik OIDC (Authorization Code + PKCE).
 	s.mux.HandleFunc("GET /auth/login", s.handleLogin)
@@ -72,6 +88,31 @@ func (s *Server) routes() {
 // Handler returns the root HTTP handler (useful for tests).
 func (s *Server) Handler() http.Handler {
 	return s.mux
+}
+
+// sameOrigin reports whether a state-changing request came from our own site.
+// Browsers send the Origin header on cross-site POST/DELETE, so a mismatch
+// signals CSRF. When no Origin is present (some same-origin clients), the
+// SameSite=Lax session cookie remains the guard, so we allow it. This is
+// defense-in-depth, not the primary CSRF control.
+func (s *Server) sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if u.Host == r.Host {
+		return true
+	}
+	if s.cfg.WebPublicURL != "" {
+		if pu, err := url.Parse(s.cfg.WebPublicURL); err == nil && pu.Host == u.Host {
+			return true
+		}
+	}
+	return false
 }
 
 // Run starts the HTTP server and blocks until the context is cancelled, at

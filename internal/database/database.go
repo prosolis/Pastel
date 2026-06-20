@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
+
+	"github.com/prosolis/Pastel/internal/normalize"
 )
 
 type DB struct {
@@ -32,11 +33,23 @@ func (b *Bool) Scan(v any) error {
 	case float64:
 		*b = t != 0
 	case []byte:
-		*b = len(t) == 1 && t[0] == '1'
+		*b = Bool(truthy(string(t)))
+	case string:
+		*b = Bool(truthy(t))
 	default:
 		return fmt.Errorf("cannot scan %T into Bool", v)
 	}
 	return nil
+}
+
+// truthy interprets a textual boolean from SQLite (which may surface a flag
+// column as text depending on its declared affinity).
+func truthy(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "t", "yes", "y":
+		return true
+	}
+	return false
 }
 
 func (b Bool) Value() (driver.Value, error) {
@@ -57,6 +70,11 @@ func Open(path string) (*DB, error) {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, err
 	}
+	// The bot loop and the in-process web server share this single handle.
+	// SQLite allows only one writer at a time; capping the pool to one
+	// connection serializes access so concurrent writes/reads don't fail with
+	// SQLITE_BUSY (and so the busy_timeout/PRAGMA state can't vary per conn).
+	db.SetMaxOpenConns(1)
 	d := &DB{db: db}
 	if err := d.migrate(); err != nil {
 		return nil, err
@@ -243,6 +261,23 @@ func (d *DB) SaveDeal(deal Deal) error {
 	return err
 }
 
+// Deal pagination bounds. The web API clamps client-supplied page sizes to
+// this range so a missing or out-of-range limit falls back to the default.
+const (
+	DefaultDealLimit = 48
+	MaxDealLimit     = 200
+)
+
+// ClampDealLimit normalizes a client-supplied page size to the supported range,
+// defaulting unset (<=0) or oversized values to DefaultDealLimit. Callers use
+// it to report the effective limit they actually applied.
+func ClampDealLimit(limit int) int {
+	if limit <= 0 || limit > MaxDealLimit {
+		return DefaultDealLimit
+	}
+	return limit
+}
+
 // DealFilter describes the query the web interface wants to run against deals.
 type DealFilter struct {
 	Query       string
@@ -266,7 +301,7 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 
 	if q := strings.TrimSpace(f.Query); q != "" {
 		where = append(where, "title_normalized LIKE ?")
-		args = append(args, "%"+normalizeQuery(q)+"%")
+		args = append(args, "%"+normalize.Text(q)+"%")
 	}
 	if len(f.Sources) > 0 {
 		where = append(where, "source IN ("+placeholders(len(f.Sources))+")")
@@ -312,10 +347,7 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	}
 
 	order := orderClause(f.Sort)
-	limit := f.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 48
-	}
+	limit := ClampDealLimit(f.Limit)
 	query := "SELECT dedup_id, source, kind, title, title_normalized, store, " +
 		"sale_price, normal_price, discount, rating, url, is_hist_low, is_free, " +
 		"upcoming, expires_at, posted_at FROM deals" + clause + order + " LIMIT ? OFFSET ?"
@@ -422,17 +454,3 @@ func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
-// normalizeQuery lowercases, strips non-alphanumeric characters (keeping
-// spaces), and collapses whitespace so a search term matches the stored
-// title_normalized. It mirrors watchlist.Normalize; kept local to avoid
-// coupling the database package to the watchlist package.
-func normalizeQuery(s string) string {
-	s = strings.ToLower(s)
-	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' {
-			b.WriteRune(r)
-		}
-	}
-	return strings.Join(strings.Fields(b.String()), " ")
-}

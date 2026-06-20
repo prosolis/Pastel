@@ -248,13 +248,17 @@ func main() {
 	// Start the web interface if enabled. It shares the database and watchlist
 	// store, and shuts down when webCancel is called.
 	webCtx, webCancel := context.WithCancel(context.Background())
+	webDone := make(chan struct{})
 	if cfg.WebEnabled {
 		srv := web.New(cfg, db, watchStore)
 		go func() {
+			defer close(webDone)
 			if err := srv.Run(webCtx); err != nil {
 				slog.Error("web server stopped", "error", err)
 			}
 		}()
+	} else {
+		close(webDone)
 	}
 
 	slog.Info("bot is running", "sources", cfg.DealSources)
@@ -267,6 +271,9 @@ func main() {
 	slog.Info("shutting down")
 	webCancel()
 	close(stop)
+	// Wait for the web server to finish draining in-flight requests before the
+	// deferred db.Close() runs, so handlers don't query a closed database.
+	<-webDone
 }
 
 func populateInitialState(cfg *config.Config, db *database.DB) {

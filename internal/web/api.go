@@ -76,9 +76,12 @@ func (s *Server) handleDeals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"deals":  deals,
-		"total":  total,
-		"limit":  filter.Limit,
+		"deals": deals,
+		"total": total,
+		// Report the limit actually applied, not the raw request value: QueryDeals
+		// clamps an unset/out-of-range limit to a default, so echoing filter.Limit
+		// (0 when unset) would mislead a paginating client.
+		"limit":  database.ClampDealLimit(filter.Limit),
 		"offset": filter.Offset,
 	})
 }

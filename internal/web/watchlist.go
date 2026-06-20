@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/prosolis/Pastel/internal/database"
+	"github.com/prosolis/Pastel/internal/normalize"
 )
 
 // watchJSON is the wire shape for a single watchlist entry.
@@ -50,6 +51,19 @@ func (s *Server) handleWatchlistPost(w http.ResponseWriter, r *http.Request, ses
 	game := strings.TrimSpace(body.Game)
 	if game == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "game is required"})
+		return
+	}
+	// Bound the stored name: oversized entries are re-scanned against every deal
+	// in FindMatchingUsers and echoed back verbatim, so cap them at a sane length.
+	if len(game) > 200 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "game name is too long"})
+		return
+	}
+	// AddWatch silently drops names that normalize to empty (punctuation only),
+	// returning added=false — indistinguishable from "already watching". Reject
+	// them explicitly so the client gets a clear error instead.
+	if normalize.Text(game) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "game name must contain letters or numbers"})
 		return
 	}
 

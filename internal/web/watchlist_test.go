@@ -104,3 +104,26 @@ func TestWatchlistAddRejectsEmpty(t *testing.T) {
 		t.Fatalf("expected 400 for empty game, got %d", rec.Code)
 	}
 }
+
+func TestWatchlistAddRejectsPunctuationOnly(t *testing.T) {
+	s, cookie := newAuthedServer(t, "@alice:example.com")
+	// Normalizes to empty — must be rejected, not silently reported added=false.
+	rec := addWatch(t, s, cookie, "!!! ---")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for punctuation-only game, got %d", rec.Code)
+	}
+}
+
+func TestWatchlistMutationRejectsCrossOrigin(t *testing.T) {
+	s, cookie := newAuthedServer(t, "@alice:example.com")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/watchlist", strings.NewReader(`{"game":"Celeste"}`))
+	req.AddCookie(cookie)
+	req.Header.Set("Origin", "https://evil.example.net")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for cross-origin mutation, got %d", rec.Code)
+	}
+}

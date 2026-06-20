@@ -218,6 +218,10 @@ function cardHTML(d) {
         d.normalPrice > d.salePrice ? `<span class="normal">${money(d.normalPrice)}</span>` : ""
       }</div>`;
 
+  // Deal URLs come from external sources; only emit a link for a benign
+  // http(s) scheme so a javascript:/data: URL can't run as script (XSS).
+  const href = safeURL(d.url);
+
   const div = document.createElement("div");
   div.className = "card";
   div.innerHTML = `
@@ -226,7 +230,7 @@ function cardHTML(d) {
     <div class="meta">${escapeHTML(d.store || d.source)}${d.rating ? ` · ★ ${d.rating}` : ""}</div>
     ${price}
     <div class="card-actions">
-      ${d.url ? `<a class="buy" href="${escapeAttr(d.url)}" target="_blank" rel="noopener">View deal</a>` : ""}
+      ${href ? `<a class="buy" href="${escapeAttr(href)}" target="_blank" rel="noopener">View deal</a>` : ""}
     </div>
   `;
 
@@ -264,14 +268,16 @@ async function toggleWatch(title, btn) {
   btn.disabled = true;
   try {
     if (watched.has(norm)) {
-      await fetch("/api/watchlist?id=" + encodeURIComponent(watched.get(norm)), { method: "DELETE" });
+      const res = await fetch("/api/watchlist?id=" + encodeURIComponent(watched.get(norm)), { method: "DELETE" });
+      if (!res.ok) throw new Error("remove failed: " + res.status);
       watched.delete(norm);
     } else {
-      await fetch("/api/watchlist", {
+      const res = await fetch("/api/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ game: title }),
       });
+      if (!res.ok) throw new Error("add failed: " + res.status);
       // Celebrate! Confetti bursts from the button that was just toggled on.
       const r = btn.getBoundingClientRect();
       burstConfetti(r.left + r.width / 2, r.top + r.height / 2);
@@ -293,6 +299,19 @@ function escapeHTML(s) {
 }
 function escapeAttr(s) {
   return escapeHTML(s).replace(/"/g, "&quot;");
+}
+
+// safeURL returns the URL only when it parses as an http(s) link, otherwise "".
+// This blocks javascript:/data: and other dangerous schemes from externally
+// sourced deal URLs before they reach an href.
+function safeURL(u) {
+  if (!u) return "";
+  try {
+    const parsed = new URL(u, window.location.origin);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : "";
+  } catch {
+    return "";
+  }
 }
 
 // renderSkeletons fills the grid with shimmering placeholder cards while a
@@ -449,7 +468,8 @@ function renderDrawer(watches) {
 
 async function removeWatchById(id) {
   try {
-    await fetch("/api/watchlist?id=" + encodeURIComponent(id), { method: "DELETE" });
+    const res = await fetch("/api/watchlist?id=" + encodeURIComponent(id), { method: "DELETE" });
+    if (!res.ok) throw new Error("remove failed: " + res.status);
   } catch (err) {
     console.error("remove watch failed", err);
   }
@@ -502,11 +522,12 @@ function init() {
     const game = input.value.trim();
     if (!game) return;
     try {
-      await fetch("/api/watchlist", {
+      const res = await fetch("/api/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ game }),
       });
+      if (!res.ok) throw new Error("add failed: " + res.status);
       const r = input.getBoundingClientRect();
       burstConfetti(r.left + r.width / 2, r.top);
       boingMascot();
