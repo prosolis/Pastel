@@ -38,15 +38,21 @@ document is the source of truth for decisions and progress.
   - Pipeline wiring: `cmd/pastel/persist.go` converters; called in
     `checkCheapShark`/`checkITADDeals`/`checkEpicFreeGames` + `populateInitialState`.
   - Round-trip test in `internal/database/database_test.go`.
-- [ ] **M2 — Config + HTTP server skeleton + read-only API + static embed + frontend shell**
-  - Config: `WEB_ENABLED`, `WEB_LISTEN_ADDR` (default `:8080`), `WEB_PUBLIC_URL`,
-    `MATRIX_SERVER_NAME` (default = domain of `MATRIX_BOT_USER_ID`), `OIDC_ISSUER_URL`,
-    `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`.
-  - `internal/web`: server, routes, `//go:embed static`.
-  - `GET /api/deals` (query params: q, source, store, kind, min_discount, max_price,
-    hist_low, free, sort, limit, offset), `GET /api/facets`, `GET /api/me`.
-  - Minimal static shell so deals render. Start server goroutine from `main.go`
-    when `WEB_ENABLED`.
+- [x] **M2 — Config + HTTP server skeleton + read-only API + static embed + frontend shell** *(done)*
+  - Config (`internal/config/config.go`): `WEB_ENABLED`, `WEB_LISTEN_ADDR` (default `:8080`),
+    `WEB_PUBLIC_URL`, `MATRIX_SERVER_NAME` (default = domain parsed from `MATRIX_BOT_USER_ID`
+    via `serverNameFromUserID`), `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`.
+    Added `envBool` helper.
+  - `internal/web/server.go`: `Server` struct, `New`, `routes`, `Handler` (for tests),
+    `Run(ctx)` with graceful shutdown; `//go:embed static`.
+  - `internal/web/api.go`: `GET /api/deals` (q, source, store, kind, min_discount,
+    max_price, hist_low, free, sort, limit, offset → `{deals,total,limit,offset}`),
+    `GET /api/facets`, `GET /api/me` (stub: always unauthenticated, reports `oidcEnabled`).
+  - `internal/web/static/`: `index.html`, `style.css`, `app.js` — functional gallery
+    with filters/sort/pagination (pastel-themed but the animated pass is M5).
+  - Wired into `cmd/pastel/main.go`: web server started in a goroutine under a
+    cancelable context when `WEB_ENABLED`; cancelled on shutdown signal.
+  - `internal/web/server_test.go`: httptest coverage for all 3 endpoints + static index.
 - [ ] **M3 — Authentik OIDC**
   - `oidc.NewProvider` discovery (lazy/non-fatal if it fails — browsing still works).
   - `GET /auth/login` (state + PKCE, state cookie), `GET /auth/callback`

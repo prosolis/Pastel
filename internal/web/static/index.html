@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pastel — Game Deals</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="logo">🍬 Pastel</h1>
+    <div class="me" id="me"></div>
+  </header>
+
+  <main class="layout">
+    <aside class="filters">
+      <label class="field">
+        <span>Search</span>
+        <input type="search" id="q" placeholder="game title…">
+      </label>
+
+      <label class="field">
+        <span>Source</span>
+        <select id="source"><option value="">All</option></select>
+      </label>
+
+      <label class="field">
+        <span>Store</span>
+        <select id="store"><option value="">All</option></select>
+      </label>
+
+      <label class="field">
+        <span>Min discount %</span>
+        <input type="number" id="min_discount" min="0" max="100" step="5" placeholder="0">
+      </label>
+
+      <label class="field">
+        <span>Max price</span>
+        <input type="number" id="max_price" min="0" step="1" placeholder="any">
+      </label>
+
+      <label class="checkbox"><input type="checkbox" id="hist_low"> Historical low</label>
+      <label class="checkbox"><input type="checkbox" id="free"> Free only</label>
+
+      <label class="field">
+        <span>Sort</span>
+        <select id="sort">
+          <option value="newest">Newest</option>
+          <option value="discount">Biggest discount</option>
+          <option value="price_asc">Price: low → high</option>
+          <option value="price_desc">Price: high → low</option>
+          <option value="rating">Rating</option>
+        </select>
+      </label>
+    </aside>
+
+    <section class="results">
+      <div class="results-head">
+        <span id="count" class="count"></span>
+      </div>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="empty" hidden>No deals match your filters yet 🫧</div>
+      <button id="more" class="more" hidden>Load more</button>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

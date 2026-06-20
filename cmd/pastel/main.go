@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/prosolis/Pastel/internal/matrix"
 	"github.com/prosolis/Pastel/internal/preflight"
 	"github.com/prosolis/Pastel/internal/watchlist"
+	"github.com/prosolis/Pastel/internal/web"
 )
 
 const (
@@ -243,6 +245,18 @@ func main() {
 		}
 	}()
 
+	// Start the web interface if enabled. It shares the database and watchlist
+	// store, and shuts down when webCancel is called.
+	webCtx, webCancel := context.WithCancel(context.Background())
+	if cfg.WebEnabled {
+		srv := web.New(cfg, db, watchStore)
+		go func() {
+			if err := srv.Run(webCtx); err != nil {
+				slog.Error("web server stopped", "error", err)
+			}
+		}()
+	}
+
 	slog.Info("bot is running", "sources", cfg.DealSources)
 
 	// Wait for OS signal
@@ -251,6 +265,7 @@ func main() {
 	<-sigCh
 
 	slog.Info("shutting down")
+	webCancel()
 	close(stop)
 }
 

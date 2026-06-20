@@ -1,0 +1,79 @@
+// Package web serves the Pastel browsing/watchlist web interface. It runs as an
+// in-process HTTP server inside the bot, sharing the same SQLite database.
+package web
+
+import (
+	"context"
+	"embed"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/prosolis/Pastel/internal/config"
+	"github.com/prosolis/Pastel/internal/database"
+	"github.com/prosolis/Pastel/internal/watchlist"
+)
+
+//go:embed static
+var staticFS embed.FS
+
+// Server holds the dependencies the web handlers need.
+type Server struct {
+	cfg   *config.Config
+	db    *database.DB
+	watch *watchlist.Store
+	mux   *http.ServeMux
+}
+
+// New constructs a web server wired to the shared database and watchlist store.
+func New(cfg *config.Config, db *database.DB, watch *watchlist.Store) *Server {
+	s := &Server{cfg: cfg, db: db, watch: watch, mux: http.NewServeMux()}
+	s.routes()
+	return s
+}
+
+func (s *Server) routes() {
+	// Read-only deal browsing API.
+	s.mux.HandleFunc("GET /api/deals", s.handleDeals)
+	s.mux.HandleFunc("GET /api/facets", s.handleFacets)
+	s.mux.HandleFunc("GET /api/me", s.handleMe)
+
+	// Static frontend. Serve the embedded "static" directory at the root.
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		// staticFS is embedded at build time, so this cannot fail in practice.
+		panic(err)
+	}
+	s.mux.Handle("/", http.FileServer(http.FS(sub)))
+}
+
+// Handler returns the root HTTP handler (useful for tests).
+func (s *Server) Handler() http.Handler {
+	return s.mux
+}
+
+// Run starts the HTTP server and blocks until the context is cancelled, at
+// which point it shuts down gracefully. Intended to be launched in a goroutine.
+func (s *Server) Run(ctx context.Context) error {
+	srv := &http.Server{
+		Addr:              s.cfg.WebListenAddr,
+		Handler:           s.mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("web server shutdown error", "error", err)
+		}
+	}()
+
+	slog.Info("web server listening", "addr", s.cfg.WebListenAddr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
