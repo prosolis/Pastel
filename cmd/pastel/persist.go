@@ -66,14 +66,15 @@ func saveITADDeals(db *database.DB, filtered []deals.ITADDeal) {
 	}
 }
 
-// saveRedditDeals records deals scraped from Reddit deal communities. These
-// populate the web gallery's non-game categories (music, clothing, …); they are
-// intentionally not posted to Matrix, which stays focused on game deals.
-func saveRedditDeals(db *database.DB, items []deals.RedditDeal) {
+// saveWebDeals records deals scraped from RSS aggregators (DealNews, Slickdeals,
+// …). These populate the web gallery's non-game categories (tech, clothing,
+// home, …); they are intentionally not posted to Matrix, which stays focused on
+// game deals.
+func saveWebDeals(db *database.DB, items []deals.WebDeal) {
 	for _, d := range items {
 		deal := database.Deal{
 			DedupID:   d.DedupID,
-			Source:    "reddit",
+			Source:    d.Source,
 			Category:  d.Category,
 			Kind:      "deal",
 			Title:     d.Title,
@@ -85,7 +86,7 @@ func saveRedditDeals(db *database.DB, items []deals.RedditDeal) {
 			IsFree:    database.Bool(d.IsFree),
 		}
 		if err := db.SaveDeal(deal); err != nil {
-			slog.Warn("failed to save reddit deal for web", "title", d.Title, "error", err)
+			slog.Warn("failed to save web deal", "source", d.Source, "title", d.Title, "error", err)
 		}
 	}
 }

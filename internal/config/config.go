@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
-
-	"github.com/prosolis/Pastel/internal/deals"
 )
 
 type Config struct {
@@ -19,7 +17,6 @@ type Config struct {
 	MatrixDealsRoomID    string
 	ITADAPIKey           string
 	DealSources          []string
-	RedditFeeds          []deals.RedditFeed
 	MinDealRating        float64
 	MinDiscountPercent   int
 	MaxPriceUSD          float64
@@ -75,8 +72,6 @@ func Load() (*Config, error) {
 		}
 	}
 
-	c.RedditFeeds = parseRedditFeeds(os.Getenv("REDDIT_FEEDS"))
-
 	c.MinDealRating = envFloat("MIN_DEAL_RATING", 7.0)
 	c.MinDiscountPercent = envInt("MIN_DISCOUNT_PERCENT", 20)
 	c.MaxPriceUSD = envFloat("MAX_PRICE_USD", 45)
@@ -97,46 +92,6 @@ func Load() (*Config, error) {
 	c.OIDCClientSecret = os.Getenv("OIDC_CLIENT_SECRET")
 
 	return c, nil
-}
-
-// defaultRedditFeeds is the out-of-the-box set of deal communities, one per
-// category, used when REDDIT_FEEDS is unset. Override with a comma-separated
-// REDDIT_FEEDS list of "subreddit:category" pairs.
-var defaultRedditFeeds = []deals.RedditFeed{
-	{Subreddit: "buildapcsales", Category: "tech"},
-	{Subreddit: "GuitarDeals", Category: "music"},
-	{Subreddit: "AVexchangeDeals", Category: "music"},
-	{Subreddit: "frugalmalefashion", Category: "clothing"},
-	{Subreddit: "frugalfemalefashion", Category: "clothing"},
-	{Subreddit: "deals", Category: "general"},
-}
-
-// parseRedditFeeds parses a "sub:category,sub:category" list into feeds,
-// falling back to the built-in defaults when the value is empty. Entries
-// missing a category default to "general".
-func parseRedditFeeds(raw string) []deals.RedditFeed {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultRedditFeeds
-	}
-	var feeds []deals.RedditFeed
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		sub, cat, found := strings.Cut(part, ":")
-		sub = strings.TrimSpace(sub)
-		cat = strings.TrimSpace(strings.ToLower(cat))
-		if sub == "" {
-			continue
-		}
-		if !found || cat == "" {
-			cat = "general"
-		}
-		feeds = append(feeds, deals.RedditFeed{Subreddit: sub, Category: cat})
-	}
-	return feeds
 }
 
 // serverNameFromUserID extracts the homeserver domain from a Matrix user ID

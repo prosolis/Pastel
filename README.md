@@ -2,14 +2,15 @@
 
 A Matrix bot that posts gaming deals and free game alerts to a specified Matrix room, with a personal watchlist feature via DMs. Its companion web UI goes further, browsing **multi-category deals** — games, music equipment, clothing, tech, and more — with a category selector across the top.
 
-Game deals (posted to Matrix and shown in the web UI) are sourced from PC/digital storefronts (Steam, GOG, Humble Store, GreenManGaming, Epic Games Store). Non-game categories are aggregated for the web UI from Reddit deal communities.
+Game deals (posted to Matrix and shown in the web UI) are sourced from PC/digital storefronts (Steam, GOG, Humble Store, GreenManGaming, Epic Games Store). Non-game categories are aggregated for the web UI from RSS deal aggregators (DealNews, Slickdeals).
 
 ## Data Sources
 
 - **CheapShark** — polled every 2 hours for top deals across Steam, GOG, Humble Store, and GreenManGaming
 - **IsThereAnyDeal** — polled every 2 hours for deals across all tracked stores, with built-in historical low detection (requires API key)
 - **Epic Games Store** — polled daily for free game promotions
-- **Reddit** — deal communities scraped every 3 hours for the web UI's non-game categories (music, clothing, tech, …); each subreddit maps to a category via `REDDIT_FEEDS`. Web-only — not posted to Matrix. Enable by adding `reddit` to `DEAL_SOURCES`.
+- **DealNews** — categorized US deal RSS feeds scraped every 3 hours for the web UI's non-game categories (tech, clothing, home, sports, media, games). Web-only — not posted to Matrix. Enable by adding `dealnews` to `DEAL_SOURCES`.
+- **Slickdeals** — the Slickdeals frontpage RSS feed, scraped on the same schedule into the catch-all `general` category. Web-only. Enable by adding `slickdeals` to `DEAL_SOURCES`.
 
 CheapShark and IsThereAnyDeal can be used individually or together — configure via the `DEAL_SOURCES` variable. When used as a deal source, IsThereAnyDeal provides historical low flags directly. When only CheapShark is active, IsThereAnyDeal can still optionally enrich deals with historical low info via the `ITAD_API_KEY`.
 

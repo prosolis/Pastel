@@ -213,8 +213,10 @@ let activeCategory = "";
 const CATEGORY_META = {
   games: { label: "Games", icon: "🎮" },
   tech: { label: "Tech", icon: "💻" },
-  music: { label: "Music", icon: "🎸" },
+  media: { label: "Media", icon: "🎬" },
   clothing: { label: "Clothing", icon: "👕" },
+  home: { label: "Home", icon: "🏠" },
+  sports: { label: "Sports", icon: "🏃" },
   general: { label: "Deals", icon: "🛍️" },
 };
 function catMeta(c) {

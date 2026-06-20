@@ -182,11 +182,10 @@ func main() {
 	}
 	checkEpicFreeGames(cfg, db, mx, watchStore)
 
-	// Reddit's initial scrape runs in the background: it is rate-limited and can
-	// take a minute across several subreddits, which we don't want blocking the
-	// bot's startup. The ticker below keeps it fresh thereafter.
-	if cfg.HasSource("reddit") {
-		go checkReddit(cfg, db)
+	// Web-only RSS sources scrape in the background so several feeds don't block
+	// the bot's startup. The ticker below keeps them fresh thereafter.
+	if hasWebSource(cfg) {
+		go checkWebDeals(cfg, db)
 	}
 
 	// Run initial expiry check
@@ -238,7 +237,7 @@ func main() {
 		}
 	}()
 
-	if cfg.HasSource("reddit") {
+	if hasWebSource(cfg) {
 		go func() {
 			ticker := time.NewTicker(3 * time.Hour)
 			defer ticker.Stop()
@@ -247,7 +246,7 @@ func main() {
 				case <-stop:
 					return
 				case <-ticker.C:
-					checkReddit(cfg, db)
+					checkWebDeals(cfg, db)
 				}
 			}
 		}()
@@ -567,24 +566,44 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 	}
 }
 
-// checkReddit scrapes the configured Reddit deal communities and records them
-// for the web gallery. Unlike the game sources it does not post to Matrix —
-// these multi-category deals (music, clothing, …) live only in the web UI.
-func checkReddit(cfg *config.Config, db *database.DB) {
-	slog.Debug("checking reddit deals", "feeds", len(cfg.RedditFeeds))
+// checkWebDeals scrapes the enabled RSS deal aggregators (DealNews, Slickdeals,
+// …) and records them for the web gallery. Unlike the game sources it does not
+// post to Matrix — these multi-category deals (tech, clothing, home, …) live
+// only in the web UI.
+func checkWebDeals(cfg *config.Config, db *database.DB) {
+	var items []deals.WebDeal
 
-	items, err := deals.FetchRedditDeals(cfg.RedditFeeds)
-	if err != nil {
-		slog.Error("reddit fetch failed", "error", err)
-		return
+	if cfg.HasSource("dealnews") {
+		got, err := deals.FetchDealNewsDeals()
+		if err != nil {
+			slog.Error("dealnews fetch failed", "error", err)
+		} else {
+			items = append(items, got...)
+		}
 	}
 
-	saveRedditDeals(db, items)
-	slog.Info("recorded reddit deals", "count", len(items))
+	if cfg.HasSource("slickdeals") {
+		got, err := deals.FetchSlickdealsDeals()
+		if err != nil {
+			slog.Error("slickdeals fetch failed", "error", err)
+		} else {
+			items = append(items, got...)
+		}
+	}
+
+	if len(items) > 0 {
+		saveWebDeals(db, items)
+	}
+	slog.Info("recorded web deals", "count", len(items))
 
 	if err := db.PruneDealsTable(30); err != nil {
 		slog.Warn("failed to prune old web deals", "error", err)
 	}
+}
+
+// hasWebSource reports whether any web-only RSS aggregator is enabled.
+func hasWebSource(cfg *config.Config) bool {
+	return cfg.HasSource("dealnews") || cfg.HasSource("slickdeals")
 }
 
 func checkWatchlistExpiry(ws *watchlist.Store, mx *matrix.Client) {
