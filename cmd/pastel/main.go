@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/prosolis/Pastel/internal/matrix"
 	"github.com/prosolis/Pastel/internal/preflight"
 	"github.com/prosolis/Pastel/internal/watchlist"
+	"github.com/prosolis/Pastel/internal/web"
 )
 
 const (
@@ -243,6 +245,22 @@ func main() {
 		}
 	}()
 
+	// Start the web interface if enabled. It shares the database and watchlist
+	// store, and shuts down when webCancel is called.
+	webCtx, webCancel := context.WithCancel(context.Background())
+	webDone := make(chan struct{})
+	if cfg.WebEnabled {
+		srv := web.New(cfg, db, watchStore)
+		go func() {
+			defer close(webDone)
+			if err := srv.Run(webCtx); err != nil {
+				slog.Error("web server stopped", "error", err)
+			}
+		}()
+	} else {
+		close(webDone)
+	}
+
 	slog.Info("bot is running", "sources", cfg.DealSources)
 
 	// Wait for OS signal
@@ -251,7 +269,11 @@ func main() {
 	<-sigCh
 
 	slog.Info("shutting down")
+	webCancel()
 	close(stop)
+	// Wait for the web server to finish draining in-flight requests before the
+	// deferred db.Close() runs, so handlers don't query a closed database.
+	<-webDone
 }
 
 func populateInitialState(cfg *config.Config, db *database.DB) {
@@ -265,6 +287,7 @@ func populateInitialState(cfg *config.Config, db *database.DB) {
 			for _, d := range filtered {
 				_ = db.MarkPosted(d.DedupID, "cheapshark", d.Title)
 			}
+			saveCheapSharkDeals(db, filtered)
 			slog.Info("first run: populated cheapshark deals", "count", len(filtered))
 		}
 	}
@@ -279,6 +302,7 @@ func populateInitialState(cfg *config.Config, db *database.DB) {
 			for _, d := range filtered {
 				_ = db.MarkPosted(d.DedupID, "itad", d.Title)
 			}
+			saveITADDeals(db, filtered)
 			slog.Info("first run: populated itad deals", "count", len(filtered))
 		}
 	}
@@ -351,6 +375,10 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 		}
 	}
 
+	// Record full deal data for the web interface (all current deals, not just
+	// newly-posted ones).
+	saveCheapSharkDeals(db, filtered)
+
 	threadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyGameDeals, "Game Deals")
 	if err != nil {
 		slog.Error("failed to get/create game deals thread", "error", err)
@@ -390,6 +418,9 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 	if err := db.PruneOldDeals(30); err != nil {
 		slog.Warn("failed to prune old deals", "error", err)
 	}
+	if err := db.PruneDealsTable(30); err != nil {
+		slog.Warn("failed to prune old web deals", "error", err)
+	}
 }
 
 func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv *currency.Converter, ws *watchlist.Store) {
@@ -407,6 +438,9 @@ func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv
 	}
 
 	filtered := deals.FilterITADDeals(itadDeals, cfg.MinDiscountPercent, cfg.MaxPriceUSD)
+
+	// Record full deal data for the web interface.
+	saveITADDeals(db, filtered)
 
 	gameThreadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyGameDeals, "Game Deals")
 	if err != nil {
@@ -457,6 +491,9 @@ func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv
 	if err := db.PruneOldDeals(30); err != nil {
 		slog.Warn("failed to prune old deals", "error", err)
 	}
+	if err := db.PruneDealsTable(30); err != nil {
+		slog.Warn("failed to prune old web deals", "error", err)
+	}
 }
 
 func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, ws *watchlist.Store) {
@@ -467,6 +504,9 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 		slog.Error("epic fetch failed", "error", err)
 		return
 	}
+
+	// Record full deal data for the web interface.
+	saveEpicFreeGames(db, games)
 
 	threadID, err := getOrCreateThread(db, mx, cfg.MatrixDealsRoomID, threadKeyEpicFree, "Epic Free Games")
 	if err != nil {

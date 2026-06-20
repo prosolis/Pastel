@@ -3,9 +3,10 @@ package watchlist
 import (
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/jmoiron/sqlx"
+
+	"github.com/prosolis/Pastel/internal/normalize"
 )
 
 const watchDuration = 180 * 24 * time.Hour
@@ -37,16 +38,11 @@ func NewStore(db *sqlx.DB) *Store {
 	return &Store{db: db}
 }
 
-// Normalize lowercases, strips non-alphanumeric (keeping spaces), and collapses whitespace.
+// Normalize lowercases, strips non-alphanumeric (keeping spaces), and collapses
+// whitespace. It delegates to normalize.Text so the watchlist matcher and the
+// web deal search stay in lockstep.
 func Normalize(s string) string {
-	s = strings.ToLower(s)
-	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' {
-			b.WriteRune(r)
-		}
-	}
-	return strings.Join(strings.Fields(b.String()), " ")
+	return normalize.Text(s)
 }
 
 // AddWatch adds a game to a user's watchlist. Returns false if already watched.
@@ -82,6 +78,20 @@ func (s *Store) RemoveWatch(userID, gameName string) (bool, error) {
 	return rows > 0, nil
 }
 
+// RemoveWatchByID removes a watch by its row ID, scoped to the owning user so
+// one user cannot delete another's entry. Returns false if not found.
+func (s *Store) RemoveWatchByID(userID string, id int64) (bool, error) {
+	result, err := s.db.Exec(
+		"DELETE FROM watchlist WHERE id = ? AND user_id = ?",
+		id, userID,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, _ := result.RowsAffected()
+	return rows > 0, nil
+}
+
 // ExtendWatch resets the expiry to 180 days from now. Returns false if not found.
 func (s *Store) ExtendWatch(userID, gameName string) (bool, error) {
 	normalized := Normalize(gameName)
@@ -100,12 +110,16 @@ func (s *Store) ExtendWatch(userID, gameName string) (bool, error) {
 
 // ListWatches returns all active watches for a user.
 func (s *Store) ListWatches(userID string) ([]WatchEntry, error) {
+	// expires_at is stored as RFC3339 (with a "T"), which does not order
+	// correctly against SQLite's CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS"), so
+	// compare against a Go-formatted RFC3339 "now" instead.
+	now := time.Now().UTC().Format(time.RFC3339)
 	var entries []WatchEntry
 	err := s.db.Select(&entries,
 		`SELECT id, user_id, game_name, game_name_normalized, created_at, expires_at, expiry_warned
-		 FROM watchlist WHERE user_id = ? AND expires_at > CURRENT_TIMESTAMP
+		 FROM watchlist WHERE user_id = ? AND expires_at > ?
 		 ORDER BY created_at`,
-		userID,
+		userID, now,
 	)
 	return entries, err
 }
@@ -115,10 +129,14 @@ func (s *Store) ListWatches(userID string) ([]WatchEntry, error) {
 func (s *Store) FindMatchingUsers(dealTitle string) ([]Match, error) {
 	normalizedTitle := Normalize(dealTitle)
 
+	// Compare against a Go-formatted RFC3339 "now" (see ListWatches): expires_at
+	// is RFC3339 and does not order correctly against CURRENT_TIMESTAMP.
+	now := time.Now().UTC().Format(time.RFC3339)
 	var entries []WatchEntry
 	err := s.db.Select(&entries,
 		`SELECT user_id, game_name, game_name_normalized
-		 FROM watchlist WHERE expires_at > CURRENT_TIMESTAMP`,
+		 FROM watchlist WHERE expires_at > ?`,
+		now,
 	)
 	if err != nil {
 		return nil, err
