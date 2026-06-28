@@ -185,7 +185,7 @@ func main() {
 	// Web-only RSS sources scrape in the background so several feeds don't block
 	// the bot's startup. The ticker below keeps them fresh thereafter.
 	if hasWebSource(cfg) {
-		go checkWebDeals(cfg, db)
+		go checkWebDeals(cfg, db, mx, conv, watchStore)
 	}
 
 	// Run initial expiry check
@@ -246,7 +246,7 @@ func main() {
 				case <-stop:
 					return
 				case <-ticker.C:
-					checkWebDeals(cfg, db)
+					checkWebDeals(cfg, db, mx, conv, watchStore)
 				}
 			}
 		}()
@@ -262,6 +262,20 @@ func main() {
 				return
 			case <-ticker.C:
 				checkWatchlistExpiry(watchStore, mx)
+			}
+		}
+	}()
+
+	// Daily-digest flush — DM queued matches once a day to users in digest mode.
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				flushWatchlistDigests(watchStore, mx)
 			}
 		}
 	}()
@@ -332,31 +346,62 @@ func populateInitialState(cfg *config.Config, db *database.DB) {
 	// so they post immediately (few games, time-limited)
 }
 
-func notifyWatchlistMatches(ws *watchlist.Store, mx *matrix.Client, title, url, price string, discount int) {
-	matches, err := ws.FindMatchingUsers(title)
+// notifyWatchlist finds users watching for a deal and either DMs them instantly
+// or queues the match for their daily digest, per each user's notify mode.
+func notifyWatchlist(ws *watchlist.Store, mx *matrix.Client, d watchlist.MatchDeal, url, price string) {
+	matches, err := ws.FindMatchingUsers(d)
 	if err != nil {
 		slog.Error("watchlist match failed", "error", err)
 		return
 	}
+	modes := make(map[string]string) // per-user mode cache for this deal
 	for _, m := range matches {
-		msg := formatter.FormatWatchlistNotification(m.GameName, title, url, price, discount)
+		mode, ok := modes[m.UserID]
+		if !ok {
+			mode, _ = ws.NotifyMode(m.UserID)
+			modes[m.UserID] = mode
+		}
+		if mode == "daily" {
+			if err := ws.QueueDigest(m.UserID, m.GameName, d, url, price); err != nil {
+				slog.Error("failed to queue watchlist digest", "user", m.UserID, "error", err)
+			}
+			continue
+		}
+		var msg string
+		if d.IsFree {
+			msg = formatter.FormatWatchlistFreeNotification(m.GameName, d.Title, url)
+		} else {
+			msg = formatter.FormatWatchlistNotification(m.GameName, d.Title, url, price, d.Discount)
+		}
 		if err := mx.SendDM(id.UserID(m.UserID), msg); err != nil {
 			slog.Error("failed to send watchlist DM", "user", m.UserID, "error", err)
 		}
 	}
 }
 
-func notifyWatchlistFreeMatches(ws *watchlist.Store, mx *matrix.Client, title, url string) {
-	matches, err := ws.FindMatchingUsers(title)
+// flushWatchlistDigests DMs each user with queued daily-digest matches a single
+// summary, then clears their queue. Runs on a daily ticker.
+func flushWatchlistDigests(ws *watchlist.Store, mx *matrix.Client) {
+	users, err := ws.PendingDigestUsers()
 	if err != nil {
-		slog.Error("watchlist match failed", "error", err)
+		slog.Error("digest: list users failed", "error", err)
 		return
 	}
-	for _, m := range matches {
-		msg := formatter.FormatWatchlistFreeNotification(m.GameName, title, url)
-		if err := mx.SendDM(id.UserID(m.UserID), msg); err != nil {
-			slog.Error("failed to send watchlist DM", "user", m.UserID, "error", err)
+	for _, uid := range users {
+		items, err := ws.TakeDigest(uid)
+		if err != nil {
+			slog.Error("digest: take failed", "user", uid, "error", err)
+			continue
 		}
+		if len(items) == 0 {
+			continue
+		}
+		if err := mx.SendDM(id.UserID(uid), formatter.FormatWatchlistDigest(items)); err != nil {
+			slog.Error("digest: send failed", "user", uid, "error", err)
+		}
+	}
+	if err := ws.PruneDigest(7 * 24 * time.Hour); err != nil {
+		slog.Warn("digest: prune failed", "error", err)
 	}
 }
 
@@ -429,7 +474,13 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 		posted++
 
 		// Notify watchlist matches
-		notifyWatchlistMatches(ws, mx, d.Title, d.DealURL, conv.FormatPrice(d.SalePrice), int(math.Floor(d.Savings)))
+		notifyWatchlist(ws, mx, watchlist.MatchDeal{
+			Title:    d.Title,
+			Category: "games",
+			PriceUSD: d.SalePrice,
+			Discount: int(math.Floor(d.Savings)),
+			IsFree:   d.SalePrice == 0,
+		}, d.DealURL, conv.FormatPrice(d.SalePrice))
 	}
 
 	if posted > 0 {
@@ -507,7 +558,13 @@ func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv
 		posted++
 
 		// Notify watchlist matches
-		notifyWatchlistMatches(ws, mx, d.Title, d.URL, conv.FormatPrice(d.Price), d.Discount)
+		notifyWatchlist(ws, mx, watchlist.MatchDeal{
+			Title:    d.Title,
+			Category: "games",
+			PriceUSD: d.Price,
+			Discount: d.Discount,
+			IsFree:   d.Price == 0,
+		}, d.URL, conv.FormatPrice(d.Price))
 	}
 
 	if posted > 0 {
@@ -563,7 +620,12 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 		posted++
 
 		// Notify watchlist matches
-		notifyWatchlistFreeMatches(ws, mx, g.Title, g.URL)
+		notifyWatchlist(ws, mx, watchlist.MatchDeal{
+			Title:    g.Title,
+			Category: "games",
+			Discount: 100,
+			IsFree:   true,
+		}, g.URL, "Free")
 	}
 
 	if posted > 0 {
@@ -575,7 +637,7 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 // …) and records them for the web gallery. Unlike the game sources it does not
 // post to Matrix — these multi-category deals (tech, clothing, home, …) live
 // only in the web UI.
-func checkWebDeals(cfg *config.Config, db *database.DB) {
+func checkWebDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv *currency.Converter, ws *watchlist.Store) {
 	var items []deals.WebDeal
 
 	if cfg.HasSource("dealnews") {
@@ -598,11 +660,70 @@ func checkWebDeals(cfg *config.Config, db *database.DB) {
 
 	if len(items) > 0 {
 		saveWebDeals(db, items)
+		notifyWebDealWatchers(db, mx, conv, ws, items)
 	}
 	slog.Info("recorded web deals", "count", len(items))
 
 	if err := db.PruneDealsTable(30); err != nil {
 		slog.Warn("failed to prune old web deals", "error", err)
+	}
+}
+
+// webDealsSeededKey marks that the first web-deal scan has completed. Until it is
+// set, the initial scan only records currently-live deals (without notifying) so
+// a fresh deploy doesn't DM a backlog of already-live RSS deals to existing
+// watchers — mirroring how the game sources seed via populateInitialState.
+const webDealsSeededKey = "web_deals_seeded"
+
+// notifyWebDealWatchers DMs (or queues digests for) users whose category/keyword
+// watches match newly-seen web deals. Web deals are never posted to Matrix, so
+// posted_deals is used purely as a once-per-deal notification ledger: a deal is
+// notified only the first time its dedup_id is seen.
+func notifyWebDealWatchers(db *database.DB, mx *matrix.Client, conv *currency.Converter, ws *watchlist.Store, items []deals.WebDeal) {
+	// On the very first scan, record current deals without notifying.
+	seeded, _ := db.GetConfig(webDealsSeededKey)
+	firstScan := seeded == ""
+
+	for _, d := range items {
+		seen, err := db.IsPosted(d.DedupID)
+		if err != nil {
+			slog.Warn("web deal posted-check failed", "id", d.DedupID, "error", err)
+			continue
+		}
+		if seen {
+			continue
+		}
+		if firstScan {
+			if err := db.MarkPosted(d.DedupID, d.Source, d.Title); err != nil {
+				slog.Warn("failed to seed web deal", "id", d.DedupID, "error", err)
+			}
+			continue
+		}
+
+		price := "See deal"
+		if d.IsFree {
+			price = "Free"
+		} else if d.Price > 0 {
+			price = conv.FormatPrice(d.Price)
+		}
+		notifyWatchlist(ws, mx, watchlist.MatchDeal{
+			Title:    d.Title,
+			Category: d.Category,
+			PriceUSD: d.Price,
+			Discount: d.Discount,
+			IsFree:   d.IsFree,
+		}, d.URL, price)
+
+		if err := db.MarkPosted(d.DedupID, d.Source, d.Title); err != nil {
+			slog.Warn("failed to mark web deal posted", "id", d.DedupID, "error", err)
+		}
+	}
+
+	if firstScan {
+		if err := db.SetConfig(webDealsSeededKey, "true"); err != nil {
+			slog.Warn("failed to mark web deals seeded", "error", err)
+		}
+		slog.Info("seeded web-deal notification ledger (no DMs on first scan)", "count", len(items))
 	}
 }
 

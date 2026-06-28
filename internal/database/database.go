@@ -116,6 +116,30 @@ func (d *DB) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_watchlist_normalized ON watchlist(game_name_normalized);
 		CREATE INDEX IF NOT EXISTS idx_watchlist_expires ON watchlist(expires_at);
 
+		-- user_prefs holds per-user notification settings. notify_mode is
+		-- 'instant' (DM each match immediately, the default) or 'daily' (collect
+		-- matches in pending_digest and DM one digest per day).
+		CREATE TABLE IF NOT EXISTS user_prefs (
+			user_id     TEXT PRIMARY KEY,
+			notify_mode TEXT NOT NULL DEFAULT 'instant',
+			updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+
+		-- pending_digest accumulates watchlist matches for users in 'daily' mode.
+		-- It is a table (not in-memory) so a restart never drops queued matches.
+		CREATE TABLE IF NOT EXISTS pending_digest (
+			id        INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id   TEXT NOT NULL,
+			label     TEXT NOT NULL,
+			title     TEXT NOT NULL,
+			url       TEXT NOT NULL,
+			price     TEXT,
+			discount  INTEGER DEFAULT 0,
+			is_free   INTEGER DEFAULT 0,
+			queued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_pending_digest_user ON pending_digest(user_id);
+
 		-- deals stores the full data of every deal the bot has seen so the web
 		-- interface has something rich to browse. posted_deals remains the source
 		-- of truth for dedup/posting; this table is a superset used for display.
@@ -189,6 +213,18 @@ func (d *DB) migrate() error {
 		return err
 	}
 	if err := d.addColumnIfMissing("deals", "price_suspect", "price_suspect INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// Phase 2: predicate/category watch columns. max_price and min_discount are
+	// the trailing conditions from "!watch X under 30" / "over 40% off" (0 means
+	// unconstrained); category scopes a watch to one deal category ('' = any).
+	if err := d.addColumnIfMissing("watchlist", "max_price", "max_price REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("watchlist", "min_discount", "min_discount INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("watchlist", "category", "category TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	return nil

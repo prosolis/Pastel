@@ -8,6 +8,7 @@ import (
 
 	"github.com/prosolis/Pastel/internal/currency"
 	"github.com/prosolis/Pastel/internal/deals"
+	"github.com/prosolis/Pastel/internal/watchlist"
 )
 
 // Message holds both plain-text and HTML versions of a formatted message.
@@ -114,6 +115,29 @@ func FormatWatchlistNotification(watchedName, dealTitle, dealURL string, price s
 	sb.WriteString(fmt.Sprintf("  💰 %s\n", price))
 	sb.WriteString(fmt.Sprintf("  🔗 %s", dealURL))
 	return sb.String()
+}
+
+// FormatWatchlistDigest formats a once-a-day summary of all queued watchlist
+// matches for a user in daily-digest mode.
+func FormatWatchlistDigest(items []watchlist.DigestItem) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🔔 Your daily deal digest — %d match", len(items)))
+	if len(items) != 1 {
+		sb.WriteString("es")
+	}
+	sb.WriteString(":\n")
+	for _, it := range items {
+		sb.WriteString(fmt.Sprintf("\n• \"%s\"\n", it.Label))
+		if it.IsFree != 0 {
+			sb.WriteString(fmt.Sprintf("  %s — Free\n", it.Title))
+		} else if it.Discount > 0 {
+			sb.WriteString(fmt.Sprintf("  %s — %d%% off · %s\n", it.Title, it.Discount, it.Price))
+		} else {
+			sb.WriteString(fmt.Sprintf("  %s · %s\n", it.Title, it.Price))
+		}
+		sb.WriteString(fmt.Sprintf("  🔗 %s\n", it.URL))
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // FormatWatchlistFreeNotification formats a DM notification for a free game watchlist match.

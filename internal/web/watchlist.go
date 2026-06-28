@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/prosolis/Pastel/internal/database"
-	"github.com/prosolis/Pastel/internal/normalize"
+	"github.com/prosolis/Pastel/internal/watchlist"
 )
 
 // watchJSON is the wire shape for a single watchlist entry.
@@ -59,15 +59,16 @@ func (s *Server) handleWatchlistPost(w http.ResponseWriter, r *http.Request, ses
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "game name is too long"})
 		return
 	}
-	// AddWatch silently drops names that normalize to empty (punctuation only),
-	// returning added=false — indistinguishable from "already watching". Reject
-	// them explicitly so the client gets a clear error instead.
-	if normalize.Text(game) == "" {
+	// Parse predicates/category from the free-text input (e.g. "laptop under 500",
+	// "category:clothing nike") so the web form has the same power as the DM
+	// command. Reject input whose label normalizes to empty (punctuation only).
+	spec := watchlist.ParseWatch(game)
+	if spec.Normalized == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "game name must contain letters or numbers"})
 		return
 	}
 
-	added, err := s.watch.AddWatch(sess.UserID, game)
+	added, err := s.watch.AddWatch(sess.UserID, spec)
 	if err != nil {
 		slog.Error("web: add watch failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to add watch"})

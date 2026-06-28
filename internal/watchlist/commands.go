@@ -99,32 +99,92 @@ func (h *CommandHandler) HandleMessage(senderID, body string) {
 		h.handleSearch(uid, args)
 	case "!watchlist":
 		h.handleList(uid)
+	case "!digest":
+		h.handleDigest(uid, args)
 	case "!help":
 		h.handleHelp(uid)
 	}
 }
 
-func (h *CommandHandler) handleWatch(userID id.UserID, gameName string) {
-	if gameName == "" {
-		h.reply(userID, "Usage: !watch <game name>")
+func (h *CommandHandler) handleDigest(userID id.UserID, args string) {
+	switch strings.ToLower(strings.TrimSpace(args)) {
+	case "on", "daily":
+		if err := h.store.SetNotifyMode(string(userID), "daily"); err != nil {
+			slog.Error("watchlist: set digest failed", "user", userID, "error", err)
+			h.reply(userID, "Something went wrong. Please try again.")
+			return
+		}
+		h.reply(userID, "Daily digest on — I'll collect your matches and DM one summary per day.")
+	case "off", "instant":
+		if err := h.store.SetNotifyMode(string(userID), "instant"); err != nil {
+			slog.Error("watchlist: set digest failed", "user", userID, "error", err)
+			h.reply(userID, "Something went wrong. Please try again.")
+			return
+		}
+		h.reply(userID, "Daily digest off — I'll DM you the moment a deal matches.")
+	default:
+		mode, _ := h.store.NotifyMode(string(userID))
+		state := "off (instant alerts)"
+		if mode == "daily" {
+			state = "on (one summary per day)"
+		}
+		h.reply(userID, fmt.Sprintf("Daily digest is %s. Use !digest on or !digest off.", state))
+	}
+}
+
+func (h *CommandHandler) handleWatch(userID id.UserID, args string) {
+	if args == "" {
+		h.reply(userID, "Usage: !watch <name> [under <price>] [over <N>% off] [category:<cat>]")
 		return
 	}
 
-	added, err := h.store.AddWatch(string(userID), gameName)
+	spec := ParseWatch(args)
+	if spec.Normalized == "" {
+		h.reply(userID, "Please include something to watch for, e.g. !watch elden ring under 30")
+		return
+	}
+
+	added, err := h.store.AddWatch(string(userID), spec)
 	if err != nil {
-		slog.Error("watchlist: add failed", "user", userID, "game", gameName, "error", err)
+		slog.Error("watchlist: add failed", "user", userID, "args", args, "error", err)
 		h.reply(userID, "Something went wrong. Please try again.")
 		return
 	}
 
-	if !added {
-		h.reply(userID, fmt.Sprintf("You're already watching \"%s\".", gameName))
-		return
-	}
-
 	expires := time.Now().Add(watchDuration)
-	h.reply(userID, fmt.Sprintf("Added \"%s\" to your watchlist. I'll DM you when a deal appears. Expires %s.",
-		gameName, expires.Format("January 2, 2006")))
+	verb := "Added"
+	if !added {
+		verb = "Updated"
+	}
+	h.reply(userID, fmt.Sprintf("%s \"%s\"%s to your watchlist. I'll DM you when a matching deal appears. Expires %s.",
+		verb, spec.Label, describeConstraints(spec), expires.Format("January 2, 2006")))
+}
+
+// describeConstraints renders the predicate/category part of a spec for replies,
+// e.g. " (clothing, under $30, 40%+ off)". Returns "" when unconstrained.
+func describeConstraints(spec WatchSpec) string {
+	var parts []string
+	if spec.Category != "" {
+		parts = append(parts, spec.Category)
+	}
+	if spec.MaxPrice > 0 {
+		parts = append(parts, fmt.Sprintf("under %s", formatPrice(spec.MaxPrice)))
+	}
+	if spec.MinDiscount > 0 {
+		parts = append(parts, fmt.Sprintf("%d%%+ off", spec.MinDiscount))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
+}
+
+// formatPrice renders a USD constraint without trailing-zero noise ($30, $9.99).
+func formatPrice(v float64) string {
+	if v == math.Trunc(v) {
+		return fmt.Sprintf("$%d", int64(v))
+	}
+	return fmt.Sprintf("$%.2f", v)
 }
 
 func (h *CommandHandler) handleUnwatch(userID id.UserID, args string) {
@@ -199,7 +259,11 @@ func (h *CommandHandler) handleList(userID id.UserID) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Your watchlist (%d):\n", len(entries)))
 	for i, e := range entries {
-		sb.WriteString(fmt.Sprintf("  %d. %s (expires %s)\n", i+1, e.GameName, e.ExpiresAt.Format("January 2, 2006")))
+		constraints := describeConstraints(WatchSpec{
+			Category: e.Category, MaxPrice: e.MaxPrice, MinDiscount: e.MinDiscount,
+		})
+		sb.WriteString(fmt.Sprintf("  %d. %s%s (expires %s)\n",
+			i+1, e.GameName, constraints, e.ExpiresAt.Format("January 2, 2006")))
 	}
 	sb.WriteString("\nUse !extend <#> or !unwatch <#> with the number above.")
 
@@ -248,11 +312,13 @@ func (h *CommandHandler) handleSearch(userID id.UserID, query string) {
 func (h *CommandHandler) handleHelp(userID id.UserID) {
 	h.reply(userID, "Commands:\n"+
 		"  !search <game name> — Search for current deals\n"+
-		"  !watch <game name> — Watch for deals on a game\n"+
-		"  !unwatch <# or game name> — Remove a game from your watchlist\n"+
-		"  !extend <# or game name> — Reset the 180-day expiry timer\n"+
+		"  !watch <name> [under <price>] [over <N>% off] [category:<cat>] — Watch for deals\n"+
+		"  !unwatch <# or name> — Remove a watch\n"+
+		"  !extend <# or name> — Reset the 180-day expiry timer\n"+
 		"  !watchlist — Show your numbered watchlist\n"+
+		"  !digest on|off — Daily summary instead of instant alerts\n"+
 		"  !help — Show this message\n\n"+
+		"Examples: !watch elden ring under 30 · !watch laptop over 40% off · !watch category:clothing nike\n"+
 		"Watches expire after 180 days. You'll get a reminder 7 days before.")
 }
 
