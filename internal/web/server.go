@@ -16,6 +16,7 @@ import (
 	"github.com/prosolis/Pastel/internal/config"
 	"github.com/prosolis/Pastel/internal/database"
 	"github.com/prosolis/Pastel/internal/watchlist"
+	"github.com/prosolis/Pastel/internal/webpush"
 )
 
 const (
@@ -28,9 +29,11 @@ const (
 var staticFS embed.FS
 
 func init() {
-	// Go's built-in MIME table doesn't know AVIF, and a minimal deploy host may
-	// lack /etc/mime.types, so register it explicitly for correct Content-Type.
+	// Go's built-in MIME table doesn't know AVIF or the web app manifest, and a
+	// minimal deploy host may lack /etc/mime.types, so register them explicitly
+	// for correct Content-Type.
 	_ = mime.AddExtensionType(".avif", "image/avif")
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
 }
 
 // Server holds the dependencies the web handlers need.
@@ -38,6 +41,7 @@ type Server struct {
 	cfg   *config.Config
 	db    *database.DB
 	watch *watchlist.Store
+	push  *webpush.Sender // nil when Web Push is disabled
 	mux   *http.ServeMux
 
 	authMu sync.Mutex     // guards lazy authenticator initialization
@@ -47,11 +51,13 @@ type Server struct {
 }
 
 // New constructs a web server wired to the shared database and watchlist store.
-func New(cfg *config.Config, db *database.DB, watch *watchlist.Store) *Server {
+// push may be nil, in which case the Web Push endpoints report disabled.
+func New(cfg *config.Config, db *database.DB, watch *watchlist.Store, push *webpush.Sender) *Server {
 	s := &Server{
 		cfg:           cfg,
 		db:            db,
 		watch:         watch,
+		push:          push,
 		mux:           http.NewServeMux(),
 		mutateLimiter: newRateLimiter(mutationLimit, mutationWindow),
 	}
@@ -64,6 +70,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/deals", s.handleDeals)
 	s.mux.HandleFunc("GET /api/facets", s.handleFacets)
 	s.mux.HandleFunc("GET /api/me", s.handleMe)
+
+	// Web Push (Phase 5). The VAPID public key is readable unauthenticated (the
+	// service worker needs it to subscribe); (un)subscribing is auth-gated and
+	// rate-limited like the watchlist mutations.
+	s.mux.HandleFunc("GET /api/push/config", s.handlePushConfig)
+	s.mux.HandleFunc("POST /api/push/subscribe", s.requireAuthMutation(s.handlePushSubscribe))
+	s.mux.HandleFunc("POST /api/push/unsubscribe", s.requireAuthMutation(s.handlePushUnsubscribe))
 
 	// Auth-gated watchlist API. Mutations additionally get a same-origin (CSRF)
 	// check and per-user rate limiting.

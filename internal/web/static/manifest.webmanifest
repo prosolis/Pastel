@@ -1,0 +1,17 @@
+{
+  "name": "Pastel — Deals",
+  "short_name": "Pastel",
+  "description": "A hella cute gallery of the best game & everyday deals, with watchlist alerts.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#ffe1f1",
+  "background_color": "#fff5fb",
+  "categories": ["shopping", "games"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

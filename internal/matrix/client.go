@@ -224,6 +224,44 @@ func (c *Client) RegisterMessageHandler(fn func(senderID id.UserID, roomID id.Ro
 	})
 }
 
+// RegisterReactionHandler registers a callback for incoming m.reaction events.
+// Must be called before StartSync. The callback receives the reacting user, the
+// room, the event the reaction annotates (its target — for a deal message this
+// is the value SendDealInThread returned), and the reaction's own event ID (the
+// id later redacted on un-react). The bot's own reactions are skipped.
+//
+// Unlike messages, reactions are NOT filtered by start time: members react to
+// deals long after they were posted, and a restart that replays recent timeline
+// is made safe by the store layer's idempotent, distinct-user de-duplication
+// rather than by dropping pre-startup events.
+func (c *Client) RegisterReactionHandler(fn func(sender id.UserID, roomID id.RoomID, targetEventID, reactionEventID string)) {
+	syncer := c.client.Syncer.(*mautrix.DefaultSyncer)
+	syncer.OnEventType(event.EventReaction, func(ctx context.Context, evt *event.Event) {
+		if evt.Sender == c.client.UserID {
+			return
+		}
+		reaction := evt.Content.AsReaction()
+		if reaction == nil || reaction.RelatesTo.EventID == "" {
+			return
+		}
+		fn(evt.Sender, evt.RoomID, reaction.RelatesTo.EventID.String(), evt.ID.String())
+	})
+}
+
+// RegisterRedactionHandler registers a callback for m.room.redaction events,
+// used to drop a reaction when a member un-reacts (the homeserver redacts the
+// reaction event). The callback receives the room and the redacted event ID.
+// Must be called before StartSync.
+func (c *Client) RegisterRedactionHandler(fn func(roomID id.RoomID, redactedEventID string)) {
+	syncer := c.client.Syncer.(*mautrix.DefaultSyncer)
+	syncer.OnEventType(event.EventRedaction, func(ctx context.Context, evt *event.Event) {
+		if evt.Redacts == "" {
+			return
+		}
+		fn(evt.RoomID, evt.Redacts.String())
+	})
+}
+
 // StartSync launches the background sync loop. Must be called after handler
 // registration so events are dispatched to registered callbacks.
 func (c *Client) StartSync() {
@@ -292,8 +330,11 @@ func (c *Client) CreateThread(roomID, text string) (string, error) {
 	return resp.EventID.String(), nil
 }
 
-// SendDealInThread sends a formatted deal message as a reply in a thread.
-func (c *Client) SendDealInThread(roomID, threadEventID, plainText, html string) error {
+// SendDealInThread sends a formatted deal message as a reply in a thread and
+// returns the event ID of the message it created. That event ID is the join key
+// for community reactions: members react to this message, and the handler
+// registered via RegisterReactionHandler attributes those reactions to the deal.
+func (c *Client) SendDealInThread(roomID, threadEventID, plainText, html string) (string, error) {
 	evtID := id.EventID(threadEventID)
 	content := &event.MessageEventContent{
 		MsgType:       event.MsgText,
@@ -309,11 +350,11 @@ func (c *Client) SendDealInThread(roomID, threadEventID, plainText, html string)
 			IsFallingBack: true,
 		},
 	}
-	_, err := c.client.SendMessageEvent(context.Background(), id.RoomID(roomID), event.EventMessage, content)
+	resp, err := c.client.SendMessageEvent(context.Background(), id.RoomID(roomID), event.EventMessage, content)
 	if err != nil {
-		return fmt.Errorf("failed to send threaded deal: %w", err)
+		return "", fmt.Errorf("failed to send threaded deal: %w", err)
 	}
-	return nil
+	return resp.EventID.String(), nil
 }
 
 // SendNotice sends a notice message to a room (non-highlighting).

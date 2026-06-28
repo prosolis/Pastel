@@ -3,8 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pastel — Game Deals</title>
+  <title>Pastel — Deals</title>
   <meta name="theme-color" content="#ffe1f1">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="icon" href="/icon-192.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mochiy+Pop+One&family=Nunito:wght@400;600;700;800&display=swap">
@@ -30,6 +33,7 @@
       </span>
       <span class="logo-text">Pastel</span>
     </h1>
+    <nav class="catnav" id="catnav" aria-label="Deal categories"></nav>
     <div class="topbar-right">
       <button id="watchlist-toggle" class="linkbtn ghost" hidden>★ Watchlist</button>
       <div class="me" id="me"></div>
@@ -45,6 +49,9 @@
       <input type="text" id="watch-input" placeholder="Add a game to watch…" autocomplete="off">
       <button type="submit" class="linkbtn">Add</button>
     </form>
+    <!-- Web Push toggle (Phase 5). Hidden unless signed in, push is enabled, and
+         the browser supports it. -->
+    <button id="push-toggle" class="linkbtn ghost push-toggle" hidden>🔕 Enable deal alerts</button>
     <ul id="watch-list" class="watch-list"></ul>
     <div id="watch-empty" class="watch-empty" hidden>
       <picture>
@@ -85,11 +92,14 @@
 
       <label class="checkbox"><input type="checkbox" id="hist_low"> Historical low</label>
       <label class="checkbox"><input type="checkbox" id="free"> Free only</label>
+      <label class="checkbox"><input type="checkbox" id="great"> Great deals only</label>
 
       <label class="field">
         <span>Sort</span>
         <select id="sort">
           <option value="newest">Newest</option>
+          <option value="hot">🔥 Heat (most loved)</option>
+          <option value="verdict">Best deals</option>
           <option value="discount">Biggest discount</option>
           <option value="price_asc">Price: low → high</option>
           <option value="price_desc">Price: high → low</option>

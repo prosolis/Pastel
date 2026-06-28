@@ -116,12 +116,37 @@ func (d *DB) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_watchlist_normalized ON watchlist(game_name_normalized);
 		CREATE INDEX IF NOT EXISTS idx_watchlist_expires ON watchlist(expires_at);
 
+		-- user_prefs holds per-user notification settings. notify_mode is
+		-- 'instant' (DM each match immediately, the default) or 'daily' (collect
+		-- matches in pending_digest and DM one digest per day).
+		CREATE TABLE IF NOT EXISTS user_prefs (
+			user_id     TEXT PRIMARY KEY,
+			notify_mode TEXT NOT NULL DEFAULT 'instant',
+			updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+
+		-- pending_digest accumulates watchlist matches for users in 'daily' mode.
+		-- It is a table (not in-memory) so a restart never drops queued matches.
+		CREATE TABLE IF NOT EXISTS pending_digest (
+			id        INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id   TEXT NOT NULL,
+			label     TEXT NOT NULL,
+			title     TEXT NOT NULL,
+			url       TEXT NOT NULL,
+			price     TEXT,
+			discount  INTEGER DEFAULT 0,
+			is_free   INTEGER DEFAULT 0,
+			queued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_pending_digest_user ON pending_digest(user_id);
+
 		-- deals stores the full data of every deal the bot has seen so the web
 		-- interface has something rich to browse. posted_deals remains the source
 		-- of truth for dedup/posting; this table is a superset used for display.
 		CREATE TABLE IF NOT EXISTS deals (
 			dedup_id         TEXT PRIMARY KEY,
 			source           TEXT NOT NULL,
+			category         TEXT NOT NULL DEFAULT 'games',
 			kind             TEXT NOT NULL,
 			title            TEXT NOT NULL,
 			title_normalized TEXT NOT NULL,
@@ -136,11 +161,39 @@ func (d *DB) migrate() error {
 			upcoming         INTEGER DEFAULT 0,
 			expires_at       TIMESTAMP,
 			posted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			event_id         TEXT NOT NULL DEFAULT '',
+			reaction_count   INTEGER NOT NULL DEFAULT 0,
+			image_url        TEXT NOT NULL DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_deals_posted ON deals(posted_at);
 		CREATE INDEX IF NOT EXISTS idx_deals_source ON deals(source);
 		CREATE INDEX IF NOT EXISTS idx_deals_title_norm ON deals(title_normalized);
+
+		-- deal_reactions records each Matrix reaction to a posted deal message,
+		-- keyed by the reaction's own event ID so re-delivered sync events never
+		-- double-count. target_event_id joins to deals.event_id; reaction_count on
+		-- deals is the number of DISTINCT users who reacted (see refreshReactionCount).
+		CREATE TABLE IF NOT EXISTS deal_reactions (
+			reaction_event_id TEXT PRIMARY KEY,
+			target_event_id   TEXT NOT NULL,
+			user_id           TEXT NOT NULL,
+			reacted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_deal_reactions_target ON deal_reactions(target_event_id);
+
+		-- price_history records every (non-free) price Pastel has observed for a
+		-- product, keyed by a stable product key (see PriceKey). It is the basis
+		-- for the trust "verdict": dedup_id changes when the discount changes, so
+		-- per-row history can't accumulate — this table can.
+		CREATE TABLE IF NOT EXISTS price_history (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			price_key  TEXT NOT NULL,
+			source     TEXT NOT NULL,
+			sale_price REAL NOT NULL,
+			seen_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_price_history_key ON price_history(price_key, seen_at);
 
 		-- web_sessions backs OIDC-authenticated web sessions.
 		CREATE TABLE IF NOT EXISTS web_sessions (
@@ -151,7 +204,92 @@ func (d *DB) migrate() error {
 			expires_at   TIMESTAMP NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
+
+		-- push_subscriptions backs Phase 5 Web Push: each row is a browser
+		-- PushSubscription owned by user_id (the Matrix mxid, the same key the
+		-- watchlist uses), so a watch match can be delivered to the browser without
+		-- a Matrix DM. endpoint is the push service URL and the natural primary key;
+		-- p256dh/auth are the subscription's encryption keys (base64url).
+		CREATE TABLE IF NOT EXISTS push_subscriptions (
+			endpoint   TEXT PRIMARY KEY,
+			user_id    TEXT NOT NULL,
+			p256dh     TEXT NOT NULL,
+			auth       TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 	`)
+	if err != nil {
+		return err
+	}
+
+	// Additive column migrations for databases created before a column existed
+	// (the CREATE TABLE statements above only take effect on a fresh install).
+	// Each step is idempotent so migrate() is safe to run on every startup.
+	if err := d.addColumnIfMissing("deals", "category", "category TEXT NOT NULL DEFAULT 'games'"); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(`CREATE INDEX IF NOT EXISTS idx_deals_category ON deals(category)`); err != nil {
+		return err
+	}
+	// Phase 1: price-verdict columns. verdict is the trust badge bucket,
+	// price_low is the lowest sale price Pastel has ever observed for the
+	// product, price_suspect flags a likely inflated discount.
+	if err := d.addColumnIfMissing("deals", "verdict", "verdict TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("deals", "price_low", "price_low REAL"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("deals", "price_suspect", "price_suspect INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// Phase 2: predicate/category watch columns. max_price and min_discount are
+	// the trailing conditions from "!watch X under 30" / "over 40% off" (0 means
+	// unconstrained); category scopes a watch to one deal category ('' = any).
+	if err := d.addColumnIfMissing("watchlist", "max_price", "max_price REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("watchlist", "min_discount", "min_discount INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("watchlist", "category", "category TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// Phase 3 (community): event_id links a deal row to the Matrix message it was
+	// posted as, so reactions to that event can be attributed; reaction_count is
+	// the number of distinct users who reacted (recomputed from deal_reactions).
+	if err := d.addColumnIfMissing("deals", "event_id", "event_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(`CREATE INDEX IF NOT EXISTS idx_deals_event ON deals(event_id)`); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("deals", "reaction_count", "reaction_count INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// Phase 4 (deal images): image_url is the per-source thumbnail extracted at
+	// fetch time (CheapShark thumb, RSS media, Epic keyImages); '' when the source
+	// carries no image, in which case the gallery falls back to the mascot art.
+	if err := d.addColumnIfMissing("deals", "image_url", "image_url TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addColumnIfMissing adds a column to an existing table when it is absent, so
+// schema additions reach databases created before the column existed. SQLite's
+// ALTER TABLE ... ADD COLUMN errors if the column is already there, so we guard
+// on pragma_table_info first.
+func (d *DB) addColumnIfMissing(table, column, ddl string) error {
+	var n int
+	if err := d.db.Get(&n, "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := d.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + ddl)
 	return err
 }
 
@@ -216,7 +354,8 @@ func (d *DB) PruneOldDeals(days int) error {
 type Deal struct {
 	DedupID     string     `db:"dedup_id" json:"id"`
 	Source      string     `db:"source" json:"source"`
-	Kind        string     `db:"kind" json:"kind"` // game | dlc | free
+	Category    string     `db:"category" json:"category"` // games | music | clothing | ...
+	Kind        string     `db:"kind" json:"kind"`         // game | dlc | free | deal
 	Title       string     `db:"title" json:"title"`
 	TitleNorm   string     `db:"title_normalized" json:"-"`
 	Store       string     `db:"store" json:"store"`
@@ -225,40 +364,108 @@ type Deal struct {
 	Discount    int        `db:"discount" json:"discount"`
 	Rating      float64    `db:"rating" json:"rating"`
 	URL         string     `db:"url" json:"url"`
+	ImageURL    string     `db:"image_url" json:"imageUrl,omitempty"` // per-source thumbnail; "" → mascot fallback
 	IsHistLow   Bool       `db:"is_hist_low" json:"isHistLow"`
 	IsFree      Bool       `db:"is_free" json:"isFree"`
 	Upcoming    Bool       `db:"upcoming" json:"upcoming"`
 	ExpiresAt   *time.Time `db:"expires_at" json:"expiresAt,omitempty"`
 	PostedAt    time.Time  `db:"posted_at" json:"postedAt"`
+	// Phase 1 trust signals. Verdict is "" until Pastel has price history.
+	Verdict      string  `db:"verdict" json:"verdict,omitempty"`            // all-time-low | good | meh | ""
+	PriceLow     float64 `db:"price_low" json:"priceLow,omitempty"`         // lowest observed sale price
+	PriceSuspect Bool    `db:"price_suspect" json:"priceSuspect,omitempty"` // likely inflated discount
+	// Phase 3 community signals. ReactionCount is the number of distinct Parodia
+	// members who reacted to the deal's Matrix message; WatcherCount is how many
+	// members have a watch whose normalized name equals this deal's (game deals).
+	ReactionCount int `db:"reaction_count" json:"reactions,omitempty"`
+	WatcherCount  int `db:"watcher_count" json:"watchers,omitempty"`
+}
+
+// PriceKey is the stable product identity used to accumulate price history.
+// dedup_id is unsuitable because it embeds the discount/timestamp and so
+// changes whenever the price moves; the normalized title (plus category, to
+// avoid cross-category collisions) is stable across re-sees of the same item.
+func PriceKey(category, titleNorm string) string {
+	if category == "" {
+		category = "games"
+	}
+	return category + "|" + titleNorm
 }
 
 // SaveDeal upserts a deal's full data. The first insert sets posted_at; later
 // upserts refresh the mutable fields (price, discount, flags) and updated_at.
 func (d *DB) SaveDeal(deal Deal) error {
+	if deal.Category == "" {
+		deal.Category = "games"
+	}
 	_, err := d.db.NamedExec(`
 		INSERT INTO deals (
-			dedup_id, source, kind, title, title_normalized, store,
-			sale_price, normal_price, discount, rating, url,
-			is_hist_low, is_free, upcoming, expires_at
+			dedup_id, source, category, kind, title, title_normalized, store,
+			sale_price, normal_price, discount, rating, url, image_url,
+			is_hist_low, is_free, upcoming, expires_at,
+			verdict, price_low, price_suspect
 		) VALUES (
-			:dedup_id, :source, :kind, :title, :title_normalized, :store,
-			:sale_price, :normal_price, :discount, :rating, :url,
-			:is_hist_low, :is_free, :upcoming, :expires_at
+			:dedup_id, :source, :category, :kind, :title, :title_normalized, :store,
+			:sale_price, :normal_price, :discount, :rating, :url, :image_url,
+			:is_hist_low, :is_free, :upcoming, :expires_at,
+			:verdict, :price_low, :price_suspect
 		)
 		ON CONFLICT(dedup_id) DO UPDATE SET
-			store        = excluded.store,
-			sale_price   = excluded.sale_price,
-			normal_price = excluded.normal_price,
-			discount     = excluded.discount,
-			rating       = excluded.rating,
-			url          = excluded.url,
-			is_hist_low  = excluded.is_hist_low,
-			is_free      = excluded.is_free,
-			upcoming     = excluded.upcoming,
-			expires_at   = excluded.expires_at,
-			updated_at   = CURRENT_TIMESTAMP
+			store         = excluded.store,
+			sale_price    = excluded.sale_price,
+			normal_price  = excluded.normal_price,
+			discount      = excluded.discount,
+			rating        = excluded.rating,
+			url           = excluded.url,
+			image_url     = excluded.image_url,
+			is_hist_low   = excluded.is_hist_low,
+			is_free       = excluded.is_free,
+			upcoming      = excluded.upcoming,
+			expires_at    = excluded.expires_at,
+			verdict       = excluded.verdict,
+			price_low     = excluded.price_low,
+			price_suspect = excluded.price_suspect,
+			updated_at    = CURRENT_TIMESTAMP
 	`, &deal)
 	return err
+}
+
+// RecordPrice appends a price observation for a product key. Free/zero prices
+// are ignored so giveaways don't poison the historical low. Call this before
+// upserting a deal so LowestPrice reflects the current sighting.
+func (d *DB) RecordPrice(priceKey, source string, salePrice float64) error {
+	if priceKey == "" || salePrice <= 0 {
+		return nil
+	}
+	_, err := d.db.Exec(
+		"INSERT INTO price_history (price_key, source, sale_price) VALUES (?, ?, ?)",
+		priceKey, source, salePrice,
+	)
+	return err
+}
+
+// LowestPrice returns the lowest observed sale price for a product key and
+// whether any history exists. Used to compute the trust verdict.
+func (d *DB) LowestPrice(priceKey string) (float64, bool) {
+	var low sql.NullFloat64
+	if err := d.db.Get(&low, "SELECT MIN(sale_price) FROM price_history WHERE price_key = ?", priceKey); err != nil {
+		return 0, false
+	}
+	return low.Float64, low.Valid
+}
+
+// MedianPrice returns the median observed sale price for a product key and
+// whether any history exists, used to detect inflated "normal" prices.
+func (d *DB) MedianPrice(priceKey string) (float64, bool) {
+	var prices []float64
+	if err := d.db.Select(&prices, "SELECT sale_price FROM price_history WHERE price_key = ? ORDER BY sale_price", priceKey); err != nil || len(prices) == 0 {
+		return 0, false
+	}
+	n := len(prices)
+	if n%2 == 1 {
+		return prices[n/2], true
+	}
+	return (prices[n/2-1] + prices[n/2]) / 2, true
 }
 
 // Deal pagination bounds. The web API clamps client-supplied page sizes to
@@ -278,9 +485,26 @@ func ClampDealLimit(limit int) int {
 	return limit
 }
 
+// dealColumns is the deals-table column list selected for a Deal, shared by
+// QueryDeals and TopDealsSince so the two SELECTs can't drift. watcher_count is
+// not a column — callers that need it append it to the SELECT.
+// Several deals columns are nullable but map to non-pointer Go scalars on Deal,
+// so a NULL fails the scan with "converting NULL to <type> is unsupported".
+// This bit prod: non-games RSS rows and deals without observed price history
+// leave price_low (and potentially store/url/sale_price/etc.) NULL. Coalesce
+// every such column to its zero value so any category's rows scan cleanly;
+// json:omitempty then keeps the zeroed numeric fields out of the payload.
+const dealColumns = "dedup_id, source, category, kind, title, title_normalized, " +
+	"COALESCE(store, '') AS store, COALESCE(sale_price, 0) AS sale_price, " +
+	"COALESCE(normal_price, 0) AS normal_price, COALESCE(discount, 0) AS discount, " +
+	"COALESCE(rating, 0) AS rating, COALESCE(url, '') AS url, image_url, is_hist_low, " +
+	"is_free, upcoming, expires_at, posted_at, verdict, " +
+	"COALESCE(price_low, 0) AS price_low, price_suspect, reaction_count"
+
 // DealFilter describes the query the web interface wants to run against deals.
 type DealFilter struct {
 	Query       string
+	Categories  []string
 	Sources     []string
 	Stores      []string
 	Kinds       []string
@@ -288,7 +512,8 @@ type DealFilter struct {
 	MaxPrice    float64 // 0 = no limit
 	HistLowOnly bool
 	FreeOnly    bool
-	Sort        string // newest | discount | price_asc | price_desc | rating
+	GreatOnly   bool   // only verdict all-time-low or good
+	Sort        string // newest | discount | price_asc | price_desc | rating | verdict | hot
 	Limit       int
 	Offset      int
 }
@@ -302,6 +527,12 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	if q := strings.TrimSpace(f.Query); q != "" {
 		where = append(where, "title_normalized LIKE ?")
 		args = append(args, "%"+normalize.Text(q)+"%")
+	}
+	if len(f.Categories) > 0 {
+		where = append(where, "category IN ("+placeholders(len(f.Categories))+")")
+		for _, c := range f.Categories {
+			args = append(args, c)
+		}
 	}
 	if len(f.Sources) > 0 {
 		where = append(where, "source IN ("+placeholders(len(f.Sources))+")")
@@ -335,6 +566,9 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	if f.FreeOnly {
 		where = append(where, "is_free = 1")
 	}
+	if f.GreatOnly {
+		where = append(where, "verdict IN ('all-time-low', 'good')")
+	}
 
 	clause := ""
 	if len(where) > 0 {
@@ -348,28 +582,41 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 
 	order := orderClause(f.Sort)
 	limit := ClampDealLimit(f.Limit)
-	query := "SELECT dedup_id, source, kind, title, title_normalized, store, " +
-		"sale_price, normal_price, discount, rating, url, is_hist_low, is_free, " +
-		"upcoming, expires_at, posted_at FROM deals" + clause + order + " LIMIT ? OFFSET ?"
-	args = append(args, limit, f.Offset)
+	// watcher_count is a correlated count of watchlist entries whose normalized
+	// name equals this deal's — the "X members watching" community signal. It is
+	// cheap at page sizes (<=200) and lets the API stay a single round-trip. Only
+	// active (unexpired) watches count, matching who FindMatchingUsers would
+	// actually notify, so the displayed number doesn't include stale watches.
+	now := time.Now().UTC().Format(time.RFC3339)
+	query := "SELECT " + dealColumns + ", " +
+		"(SELECT COUNT(*) FROM watchlist w WHERE w.game_name_normalized = deals.title_normalized AND w.expires_at > ?) AS watcher_count " +
+		"FROM deals" + clause + order + " LIMIT ? OFFSET ?"
+	// The watcher_count subquery is in the SELECT list, so its placeholder comes
+	// before the WHERE-clause args; prepend now to a fresh slice (args is reused
+	// by the COUNT query above and must stay unchanged).
+	selArgs := append([]any{now}, args...)
+	selArgs = append(selArgs, limit, f.Offset)
 
 	var deals []Deal
-	if err := d.db.Select(&deals, query, args...); err != nil {
+	if err := d.db.Select(&deals, query, selArgs...); err != nil {
 		return nil, 0, err
 	}
 	return deals, total, nil
 }
 
-// DealFacets returns the distinct sources and stores currently present, for
-// building the filter UI.
-func (d *DB) DealFacets() (sources []string, stores []string, err error) {
+// DealFacets returns the distinct categories, sources, and stores currently
+// present, for building the filter/navigation UI.
+func (d *DB) DealFacets() (categories []string, sources []string, stores []string, err error) {
+	if err = d.db.Select(&categories, "SELECT DISTINCT category FROM deals WHERE category IS NOT NULL AND category != '' ORDER BY category"); err != nil {
+		return nil, nil, nil, err
+	}
 	if err = d.db.Select(&sources, "SELECT DISTINCT source FROM deals ORDER BY source"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err = d.db.Select(&stores, "SELECT DISTINCT store FROM deals WHERE store IS NOT NULL AND store != '' ORDER BY store"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return sources, stores, nil
+	return categories, sources, stores, nil
 }
 
 // WebSession is an authenticated web session backed by the web_sessions table.
@@ -432,6 +679,15 @@ func (d *DB) PruneDealsTable(days int) error {
 	return err
 }
 
+// PrunePriceHistory removes price observations older than the given number of
+// days. Keep a longer window than the deals table (~180d) so "all-time low"
+// stays meaningful while remaining bounded.
+func (d *DB) PrunePriceHistory(days int) error {
+	cutoff := time.Now().AddDate(0, 0, -days).UTC().Format(time.RFC3339)
+	_, err := d.db.Exec("DELETE FROM price_history WHERE seen_at < ?", cutoff)
+	return err
+}
+
 func orderClause(sort string) string {
 	switch sort {
 	case "discount":
@@ -442,6 +698,17 @@ func orderClause(sort string) string {
 		return " ORDER BY sale_price DESC, posted_at DESC"
 	case "rating":
 		return " ORDER BY rating DESC, posted_at DESC"
+	case "verdict":
+		// Best deals first: all-time-low, then good, then everything else,
+		// newest within each bucket.
+		return " ORDER BY CASE verdict WHEN 'all-time-low' THEN 0 WHEN 'good' THEN 1 ELSE 2 END, posted_at DESC"
+	case "hot":
+		// Community heat: reaction count decayed by age in days, so a freshly
+		// loved deal outranks an old one with the same reactions. Deals with no
+		// reactions score 0 and fall to the bottom, newest-first among them.
+		// julianday() is core SQLite (no math-extension dependency); the integer
+		// reaction_count divided by a real denominator yields a real score.
+		return " ORDER BY reaction_count / (julianday('now') - julianday(posted_at) + 1) DESC, reaction_count DESC, posted_at DESC"
 	default: // newest
 		return " ORDER BY posted_at DESC"
 	}
@@ -453,4 +720,3 @@ func placeholders(n int) string {
 	}
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
-

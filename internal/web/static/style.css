@@ -102,7 +102,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 26px;
+  gap: 18px;
+  padding: 10px 26px;
   background: linear-gradient(120deg, rgba(255,225,241,0.82), rgba(233,225,255,0.82));
   backdrop-filter: blur(14px) saturate(1.3);
   -webkit-backdrop-filter: blur(14px) saturate(1.3);
@@ -131,7 +132,7 @@ body {
 }
 .mascot img {
   display: block;
-  width: 48px;
+  width: 42px;
   height: auto;
   transform-origin: 50% 90%;
   animation: bob 3.4s ease-in-out infinite;
@@ -142,6 +143,67 @@ body {
 
 .topbar-right { display: flex; align-items: center; gap: 12px; }
 .me { color: var(--ink); font-size: 0.9rem; display: flex; align-items: center; gap: 8px; }
+
+/* ---- Category nav (fills the old dead centre of the bar) ----------------- */
+.catnav {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.cat-pill {
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.86rem;
+  padding: 7px 15px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(180, 130, 200, 0.12);
+  transition: transform 0.18s var(--spring), background 0.2s ease, color 0.2s ease,
+    box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.cat-pill:hover { transform: translateY(-2px) scale(1.05); box-shadow: var(--shadow); }
+.cat-pill:active { transform: scale(0.95); }
+.cat-pill.active {
+  background: linear-gradient(120deg, var(--accent), var(--accent-deep));
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(255, 95, 174, 0.36);
+}
+
+/* Web Push opt-in toggle inside the watchlist drawer. */
+.push-toggle {
+  display: block;
+  width: 100%;
+  margin: 4px 0 12px;
+  text-align: center;
+}
+.push-toggle.on {
+  background: linear-gradient(120deg, rgba(190, 250, 225, 0.9), rgba(160, 240, 255, 0.8));
+  color: #0c7a55;
+  border-color: rgba(120, 220, 180, 0.85);
+}
+
+/* The 🎁 Free super-tab gets a minty accent so it reads as a special, free
+   destination rather than just another vertical. */
+.cat-pill.free-pill {
+  border-color: rgba(120, 220, 180, 0.85);
+  background: linear-gradient(120deg, rgba(190, 250, 225, 0.85), rgba(160, 240, 255, 0.7));
+  color: #0c7a55;
+}
+.cat-pill.free-pill.active {
+  background: linear-gradient(120deg, #2fd198, #2bb6c9);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(43, 200, 160, 0.4);
+}
 
 .linkbtn {
   border: none;
@@ -271,6 +333,25 @@ body {
 .card:hover::before { opacity: 1; }
 .card:hover::after { transform: rotate(8deg) translateX(360%); }
 
+/* Full-bleed thumbnail at the top of a card. Negative margins cancel the card
+   padding so the image runs edge-to-edge; the card's own overflow:hidden +
+   radius round the top corners. A fixed aspect ratio keeps the grid uniform
+   whether or not a card has an image. */
+.thumb {
+  margin: -18px -18px 2px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: linear-gradient(135deg, #ffe6f3, #efe7ff);
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s var(--spring);
+}
+.card:hover .thumb img { transform: scale(1.06); }
+
 .card h3 { margin: 0; font-family: "Mochiy Pop One", "Nunito", sans-serif; font-size: 0.96rem; line-height: 1.35; }
 .card .meta { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
 .price { font-size: 1.2rem; color: var(--accent-deep); font-family: "Mochiy Pop One", "Nunito", sans-serif; }
@@ -298,6 +379,32 @@ body {
   animation: shine 2.4s linear infinite;
   background-size: 200% 100%;
 }
+.badge.verdict-atl {
+  background: linear-gradient(120deg, #ff9ec7, var(--accent-deep));
+  color: #fff;
+  animation: pop 0.4s var(--spring) both;
+}
+.badge.verdict-good {
+  background: linear-gradient(120deg, #a7e8c6, var(--good));
+  color: #06513a;
+}
+.badge.suspect {
+  background: linear-gradient(120deg, #ffd6a5, #f0883e);
+  color: #5c2e00;
+}
+.seen-low { font-size: 0.74rem; color: var(--accent-2-deep); opacity: 0.85; margin-top: 2px; }
+
+/* Community signals (Phase 3): heat + watcher chips under the price. */
+.community { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 2px 9px;
+  border-radius: 999px;
+  line-height: 1.5;
+}
+.chip.heat { background: linear-gradient(120deg, #ffd0a8, #ff7eb6); color: #5c1840; }
+.chip.watching { background: rgba(150, 130, 255, 0.16); color: var(--accent-2-deep); }
 @keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 @keyframes shine { 0% { background-position: 0 0; } 100% { background-position: 200% 0; } }
 
@@ -471,6 +578,9 @@ body {
   .layout { grid-template-columns: 1fr; padding: 18px 14px 48px; }
   .filters { position: static; }
   .logo { font-size: 1.45rem; }
+  /* Let the bar wrap: logo + controls on the first row, category pills below. */
+  .topbar { flex-wrap: wrap; }
+  .catnav { order: 3; flex-basis: 100%; justify-content: flex-start; overflow-x: auto; }
 }
 
 /* ---- Reduced motion: keep it pretty, drop the motion --------------------- */

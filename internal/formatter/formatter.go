@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/prosolis/Pastel/internal/currency"
+	"github.com/prosolis/Pastel/internal/database"
 	"github.com/prosolis/Pastel/internal/deals"
+	"github.com/prosolis/Pastel/internal/watchlist"
 )
 
 // Message holds both plain-text and HTML versions of a formatted message.
@@ -114,6 +116,70 @@ func FormatWatchlistNotification(watchedName, dealTitle, dealURL string, price s
 	sb.WriteString(fmt.Sprintf("  💰 %s\n", price))
 	sb.WriteString(fmt.Sprintf("  🔗 %s", dealURL))
 	return sb.String()
+}
+
+// FormatWatchlistDigest formats a once-a-day summary of all queued watchlist
+// matches for a user in daily-digest mode.
+func FormatWatchlistDigest(items []watchlist.DigestItem) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🔔 Your daily deal digest — %d match", len(items)))
+	if len(items) != 1 {
+		sb.WriteString("es")
+	}
+	sb.WriteString(":\n")
+	for _, it := range items {
+		sb.WriteString(fmt.Sprintf("\n• \"%s\"\n", it.Label))
+		if it.IsFree != 0 {
+			sb.WriteString(fmt.Sprintf("  %s — Free\n", it.Title))
+		} else if it.Discount > 0 {
+			sb.WriteString(fmt.Sprintf("  %s — %d%% off · %s\n", it.Title, it.Discount, it.Price))
+		} else {
+			sb.WriteString(fmt.Sprintf("  %s · %s\n", it.Title, it.Price))
+		}
+		sb.WriteString(fmt.Sprintf("  🔗 %s\n", it.URL))
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// FormatWeeklyHeatDigest formats the week's most-reacted deals into a single
+// room message. Deals are assumed pre-ranked (most reactions first). A deal's
+// price line shows "Free" / a sale price / "See deal" depending on what's known.
+func FormatWeeklyHeatDigest(top []database.Deal, conv *currency.Converter) Message {
+	var plain, htmlB strings.Builder
+
+	plain.WriteString("🔥 Hottest deals this week\n")
+	htmlB.WriteString("<strong>🔥 Hottest deals this week</strong><br>\n")
+
+	medals := []string{"🥇", "🥈", "🥉"}
+	for i, d := range top {
+		rank := fmt.Sprintf("%d.", i+1)
+		if i < len(medals) {
+			rank = medals[i]
+		}
+
+		price := "See deal"
+		if d.IsFree {
+			price = "Free"
+		} else if d.SalePrice > 0 {
+			price = conv.FormatPrice(d.SalePrice)
+		}
+
+		reacts := fmt.Sprintf("%d ❤️", d.ReactionCount)
+
+		plain.WriteString(fmt.Sprintf("\n%s %s — %s · %s\n", rank, d.Title, price, reacts))
+		if d.URL != "" {
+			plain.WriteString(fmt.Sprintf("  🔗 %s\n", d.URL))
+		}
+
+		htmlB.WriteString(fmt.Sprintf("<br>%s <strong>%s</strong> — %s · %s",
+			rank, html.EscapeString(d.Title), html.EscapeString(price), reacts))
+		if d.URL != "" {
+			htmlB.WriteString(fmt.Sprintf(" · <a href=\"%s\">View</a>", html.EscapeString(d.URL)))
+		}
+		htmlB.WriteString("<br>\n")
+	}
+
+	return Message{Plain: strings.TrimRight(plain.String(), "\n"), HTML: htmlB.String()}
 }
 
 // FormatWatchlistFreeNotification formats a DM notification for a free game watchlist match.

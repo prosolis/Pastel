@@ -25,26 +25,67 @@ function startWebGLBackground(canvas) {
   if (!gl) return false;
 
   const vs = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
-  // Layered, domain-warped sine field tinted between three pastel stops.
+  // Flowing pastel aurora: iterated domain-warped value-noise (fbm) ribbons,
+  // tinted across a five-stop candy palette, with a handful of drifting bokeh
+  // orbs floating over the top for that soft, alive, "hella cute" feel.
   const fs = `
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+    #else
     precision mediump float;
+    #endif
     uniform vec2 res; uniform float t;
-    vec3 pink = vec3(1.0, 0.78, 0.90);
-    vec3 lilac = vec3(0.78, 0.72, 1.0);
-    vec3 mint  = vec3(0.74, 0.96, 0.90);
-    float wave(vec2 u, float s){
-      return sin(u.x*s + t*0.30) * cos(u.y*s - t*0.24)
-           + sin((u.x+u.y)*s*0.7 + t*0.18);
+
+    vec3 pink  = vec3(1.00, 0.71, 0.86);
+    vec3 rose  = vec3(1.00, 0.55, 0.78);
+    vec3 lilac = vec3(0.72, 0.66, 1.00);
+    vec3 sky   = vec3(0.63, 0.86, 1.00);
+    vec3 mint  = vec3(0.66, 0.97, 0.85);
+
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float noise(vec2 p){
+      vec2 i = floor(p), f = fract(p);
+      vec2 u = f*f*(3.0 - 2.0*f);
+      return mix(mix(hash(i + vec2(0.0,0.0)), hash(i + vec2(1.0,0.0)), u.x),
+                 mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), u.x), u.y);
     }
+    float fbm(vec2 p){
+      float s = 0.0, a = 0.5;
+      for (int i = 0; i < 5; i++){ s += a * noise(p); p *= 2.02; a *= 0.5; }
+      return s;
+    }
+
     void main(){
-      vec2 u = gl_FragCoord.xy / res;
-      vec2 w = u + 0.12 * vec2(wave(u, 3.0), wave(u.yx, 3.4));
-      float a = wave(w, 4.0) * 0.5 + 0.5;
-      float b = wave(w * 1.7 + 1.3, 2.5) * 0.5 + 0.5;
-      vec3 col = mix(pink, lilac, smoothstep(0.0, 1.0, a));
-      col = mix(col, mint, smoothstep(0.35, 1.0, b) * 0.5);
-      col = mix(col, vec3(1.0), 0.18); // lift toward white for that soft pastel haze
-      gl_FragColor = vec4(col, 0.92);
+      vec2 uv = gl_FragCoord.xy / res;
+      float asp = res.x / res.y;
+      vec2 p = vec2(uv.x * asp, uv.y) * 1.6;
+      float tt = t * 0.07;
+
+      // Two rounds of domain warping → soft swirling aurora structure.
+      vec2 q = vec2(fbm(p + vec2(0.0, tt)), fbm(p + vec2(5.2, tt + 1.3)));
+      vec2 r = vec2(fbm(p + 2.2*q + vec2(1.7, 9.2) + tt),
+                    fbm(p + 2.2*q + vec2(8.3, 2.8) - tt));
+      float f = fbm(p + 2.6*r);
+
+      vec3 col = mix(lilac, pink, smoothstep(0.10, 0.70, f));
+      col = mix(col, sky,  smoothstep(0.60, 1.10, length(r)) * 0.75);
+      col = mix(col, mint, smoothstep(0.28, 0.04, f) * 0.45);
+      col = mix(col, rose, smoothstep(0.62, 0.92, f) * 0.70);
+
+      // Drifting bokeh orbs — soft additive glow, gently looping paths.
+      float bok = 0.0;
+      for (int i = 0; i < 5; i++){
+        float fi = float(i);
+        vec2 c = vec2(0.5 + 0.43 * sin(t * 0.06 + fi * 2.1),
+                      0.5 + 0.41 * cos(t * 0.05 + fi * 1.7));
+        c.x *= asp;
+        float d = length(vec2(uv.x * asp, uv.y) - c);
+        bok += smoothstep(0.16, 0.0, d) * 0.09;
+      }
+      col += bok;
+
+      col = mix(col, vec3(1.0), 0.08); // a whisper of haze, not a whiteout
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), 0.97);
     }`;
 
   function compile(type, src) {
@@ -93,9 +134,10 @@ function start2DBackground(canvas) {
   const ctx = canvas.getContext("2d");
   if (!ctx) { canvas.style.display = "none"; return; }
   const orbs = [
-    { x: 0.15, y: 0.2, r: 0.5, c: "255,193,227", px: 0.00006, py: 0.00004 },
-    { x: 0.85, y: 0.25, r: 0.45, c: "201,182,255", px: -0.00005, py: 0.00006 },
-    { x: 0.5, y: 0.85, r: 0.5, c: "191,230,255", px: 0.00004, py: -0.00005 },
+    { x: 0.15, y: 0.2, r: 0.55, c: "255,150,205", px: 0.00006, py: 0.00004 },
+    { x: 0.85, y: 0.25, r: 0.5, c: "176,150,255", px: -0.00005, py: 0.00006 },
+    { x: 0.5, y: 0.85, r: 0.55, c: "150,210,255", px: 0.00004, py: -0.00005 },
+    { x: 0.7, y: 0.55, r: 0.4, c: "150,235,200", px: -0.00003, py: -0.00006 },
   ];
   function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
   resize();
@@ -163,11 +205,45 @@ function boingMascot() {
 const PAGE_SIZE = 48;
 let offset = 0;
 let total = 0;
+// The category nav's current selection. "" means "All categories".
+let activeCategory = "";
+
+// Display metadata for known categories; unknown ones fall back to a
+// title-cased label with a generic tag icon, so new verticals still render.
+const CATEGORY_META = {
+  games: { label: "Games", icon: "🎮" },
+  tech: { label: "Tech", icon: "💻" },
+  media: { label: "Media", icon: "🎬" },
+  clothing: { label: "Clothing", icon: "👕" },
+  home: { label: "Home", icon: "🏠" },
+  sports: { label: "Sports", icon: "🏃" },
+  // Phase 5 verticals (DealNews coverage expansion).
+  tools: { label: "Tools", icon: "🔧" },
+  beauty: { label: "Beauty", icon: "💄" },
+  auto: { label: "Auto", icon: "🚗" },
+  kids: { label: "Kids", icon: "🧸" },
+  office: { label: "Office", icon: "✏️" },
+  pets: { label: "Pets", icon: "🐾" },
+  general: { label: "Random shit", icon: "🛍️" },
+};
+
+// FREE_TAB is a synthetic catnav selection: not a real category, it cross-cuts
+// every vertical to show only free items (free=1). Sentinel kept distinct from
+// any real category value so currentParams can special-case it.
+const FREE_TAB = "__free__";
+function catMeta(c) {
+  return CATEGORY_META[c] || { label: c.charAt(0).toUpperCase() + c.slice(1), icon: "🏷️" };
+}
 
 // Auth + watchlist state. `watched` maps a normalized game name -> watch id so
 // cards can render the right toggle and remove entries without a round-trip.
 let me = { authenticated: false, oidcEnabled: false };
 const watched = new Map();
+
+// Web Push state (Phase 5): whether the server offers push and, if so, the VAPID
+// application server key the browser subscribes with.
+let pushEnabled = false;
+let pushPublicKey = "";
 
 const $ = (id) => document.getElementById(id);
 const grid = $("grid");
@@ -188,12 +264,17 @@ function currentParams() {
   const p = new URLSearchParams();
   const q = $("q").value.trim();
   if (q) p.set("q", q);
+  // The Free super-tab is a cross-category free=1 filter, not a real category, so
+  // it sets free instead of category. The sidebar "Free only" checkbox is an
+  // independent route to the same param (both just produce free=1).
+  if (activeCategory && activeCategory !== FREE_TAB) p.set("category", activeCategory);
+  if (activeCategory === FREE_TAB || $("free").checked) p.set("free", "1");
   if ($("source").value) p.set("source", $("source").value);
   if ($("store").value) p.set("store", $("store").value);
   if ($("min_discount").value) p.set("min_discount", $("min_discount").value);
   if ($("max_price").value) p.set("max_price", $("max_price").value);
   if ($("hist_low").checked) p.set("hist_low", "1");
-  if ($("free").checked) p.set("free", "1");
+  if ($("great").checked) p.set("great", "1");
   p.set("sort", $("sort").value);
   p.set("limit", PAGE_SIZE);
   p.set("offset", offset);
@@ -209,26 +290,62 @@ function cardHTML(d) {
   const badges = [];
   if (d.discount > 0) badges.push(`<span class="badge discount">-${d.discount}%</span>`);
   if (d.isFree) badges.push(`<span class="badge free">FREE</span>`);
+  // Trust verdict from Pastel's own price history. all-time-low and historical
+  // low are distinct signals (own-observed vs ITAD), so show both when present.
+  if (d.verdict === "all-time-low") badges.push(`<span class="badge verdict-atl">🔥 All-time low</span>`);
+  else if (d.verdict === "good") badges.push(`<span class="badge verdict-good">✓ Good price</span>`);
   if (d.isHistLow) badges.push(`<span class="badge low">★ historical low</span>`);
+  if (d.priceSuspect) badges.push(`<span class="badge suspect">⚠ Check price</span>`);
   if (d.upcoming) badges.push(`<span class="badge">upcoming</span>`);
+
+  // "Seen as low as" gives context only when we've actually observed it cheaper.
+  const seenLow =
+    !d.isFree && d.priceLow > 0 && d.priceLow < d.salePrice
+      ? `<div class="seen-low">Seen as low as ${money(d.priceLow)}</div>`
+      : "";
 
   const price = d.isFree
     ? `<div class="price">Free</div>`
     : `<div class="price">${money(d.salePrice)}${
         d.normalPrice > d.salePrice ? `<span class="normal">${money(d.normalPrice)}</span>` : ""
-      }</div>`;
+      }</div>${seenLow}`;
+
+  // Community signals (Phase 3): 🔥 reaction count from the Matrix room and how
+  // many members are watching this title. Both are omitted when zero so quiet
+  // deals don't carry empty chips.
+  const community = [];
+  if (d.reactions > 0)
+    community.push(`<span class="chip heat">🔥 ${d.reactions}</span>`);
+  if (d.watchers > 0)
+    community.push(`<span class="chip watching">👀 ${d.watchers} watching</span>`);
+  const communityHTML = community.length
+    ? `<div class="community">${community.join("")}</div>`
+    : "";
 
   // Deal URLs come from external sources; only emit a link for a benign
-  // http(s) scheme so a javascript:/data: URL can't run as script (XSS).
+  // http(s) scheme so a javascript:/data: URL can't run as script (XSS). The
+  // same guard covers the thumbnail src so a hostile image URL can't smuggle a
+  // javascript:/data: scheme.
   const href = safeURL(d.url);
+  const imgURL = safeURL(d.imageUrl);
+
+  // Lazy thumbnail. No image is a real case (most RSS deals, all ITAD) — those
+  // cards stay text-only rather than showing a placeholder. If the URL 404s or
+  // hotlink-blocks, onerror removes the figure so the grid never shows a broken
+  // image icon.
+  const thumb = imgURL
+    ? `<figure class="thumb"><img src="${escapeAttr(imgURL)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.thumb').remove()"></figure>`
+    : "";
 
   const div = document.createElement("div");
   div.className = "card";
   div.innerHTML = `
+    ${thumb}
     <div class="badges">${badges.join("")}</div>
     <h3>${escapeHTML(d.title)}</h3>
     <div class="meta">${escapeHTML(d.store || d.source)}${d.rating ? ` · ★ ${d.rating}` : ""}</div>
     ${price}
+    ${communityHTML}
     <div class="card-actions">
       ${href ? `<a class="buy" href="${escapeAttr(href)}" target="_blank" rel="noopener">View deal</a>` : ""}
     </div>
@@ -382,11 +499,42 @@ async function loadFacets() {
   try {
     const res = await fetch("/api/facets");
     const data = await res.json();
+    buildCatNav(data.categories);
     fillSelect($("source"), data.sources);
     fillSelect($("store"), data.stores);
   } catch (err) {
     console.error("failed to load facets", err);
   }
+}
+
+// buildCatNav paints the topbar category pills from the live facet list, with a
+// leading "All" pill. It is data-driven, so adding a new vertical (a new
+// category in the data) makes a new pill appear with no frontend change.
+function buildCatNav(categories) {
+  const nav = $("catnav");
+  if (!nav) return;
+  nav.innerHTML = "";
+  // "" = All, FREE_TAB = the cross-category 🎁 Free super-tab, then the live
+  // verticals. Free sits up front so it reads as a headline destination.
+  const cats = ["", FREE_TAB, ...(categories || [])];
+  for (const c of cats) {
+    const btn = document.createElement("button");
+    btn.className = "cat-pill" + (c === activeCategory ? " active" : "");
+    if (c === FREE_TAB) btn.classList.add("free-pill");
+    btn.dataset.cat = c;
+    btn.textContent = c === "" ? "✨ All" : c === FREE_TAB ? "🎁 Free" : `${catMeta(c).icon} ${catMeta(c).label}`;
+    btn.addEventListener("click", () => selectCategory(c));
+    nav.appendChild(btn);
+  }
+}
+
+function selectCategory(c) {
+  if (activeCategory === c) return;
+  activeCategory = c;
+  for (const b of document.querySelectorAll(".cat-pill")) {
+    b.classList.toggle("active", b.dataset.cat === c);
+  }
+  loadDeals(true);
 }
 
 function fillSelect(sel, values) {
@@ -424,8 +572,124 @@ async function loadMe() {
         el.append(a);
       }
     }
+    refreshPushToggle();
   } catch (err) {
     console.error("failed to load me", err);
+  }
+}
+
+/* ============================================================================
+   Web Push (Phase 5) — opt-in browser alerts for watched deals.
+   ============================================================================ */
+
+// urlBase64ToUint8Array converts the server's base64url VAPID key into the
+// Uint8Array that pushManager.subscribe() requires as applicationServerKey.
+function urlBase64ToUint8Array(b64) {
+  const padding = "=".repeat((4 - (b64.length % 4)) % 4);
+  const base64 = (b64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+// registerServiceWorker installs sw.js, which powers offline shell caching and
+// receives push messages. Harmless where service workers aren't supported.
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    await navigator.serviceWorker.register("/sw.js");
+  } catch (err) {
+    console.error("service worker registration failed", err);
+  }
+}
+
+async function loadPushConfig() {
+  try {
+    const res = await fetch("/api/push/config");
+    const data = await res.json();
+    pushEnabled = !!data.enabled;
+    pushPublicKey = data.publicKey || "";
+  } catch (err) {
+    pushEnabled = false;
+  }
+}
+
+// pushSupported gates the toggle on the server offering push AND the browser
+// having the APIs (PushManager/Notification/service workers).
+function pushSupported() {
+  return (
+    pushEnabled &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window
+  );
+}
+
+async function currentSubscription() {
+  if (!("serviceWorker" in navigator)) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+// refreshPushToggle shows the alerts button only when usable, and labels it to
+// reflect whether this browser is currently subscribed.
+async function refreshPushToggle() {
+  const btn = $("push-toggle");
+  if (!btn) return;
+  if (!me.authenticated || !pushSupported()) {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  let sub = null;
+  try {
+    sub = await currentSubscription();
+  } catch (err) {
+    /* ignore */
+  }
+  btn.classList.toggle("on", !!sub);
+  btn.textContent = sub ? "🔔 Deal alerts on" : "🔕 Enable deal alerts";
+}
+
+async function togglePush() {
+  const btn = $("push-toggle");
+  btn.disabled = true;
+  try {
+    const existing = await currentSubscription();
+    if (existing) {
+      // Unsubscribe: tell the server first, then drop the browser subscription.
+      await fetch("/api/push/unsubscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: existing.endpoint }),
+      });
+      await existing.unsubscribe();
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") return;
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(pushPublicKey),
+      });
+      const json = sub.toJSON();
+      const res = await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+      });
+      if (!res.ok) {
+        await sub.unsubscribe();
+        throw new Error("subscribe failed: " + res.status);
+      }
+      boingMascot();
+    }
+  } catch (err) {
+    console.error("toggle push failed", err);
+  } finally {
+    btn.disabled = false;
+    refreshPushToggle();
   }
 }
 
@@ -507,7 +771,7 @@ function onFilterChange() {
 }
 
 function init() {
-  for (const id of ["q", "source", "store", "min_discount", "max_price", "hist_low", "free", "sort"]) {
+  for (const id of ["q", "source", "store", "min_discount", "max_price", "hist_low", "free", "great", "sort"]) {
     const el = $(id);
     el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", onFilterChange);
   }
@@ -542,7 +806,13 @@ function init() {
   const mascot = $("mascot");
   if (mascot) mascot.addEventListener("click", boingMascot);
 
+  const pushBtn = $("push-toggle");
+  if (pushBtn) pushBtn.addEventListener("click", togglePush);
+
   startBackground();
+  registerServiceWorker();
+  // Learn whether push is offered, then (re)evaluate the toggle once auth loads.
+  loadPushConfig().then(refreshPushToggle);
   loadMe();
   loadFacets();
   loadDeals(true);

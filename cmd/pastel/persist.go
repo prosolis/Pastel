@@ -18,6 +18,7 @@ func saveCheapSharkDeals(db *database.DB, filtered []deals.CheapSharkDeal) {
 		deal := database.Deal{
 			DedupID:     d.DedupID,
 			Source:      "cheapshark",
+			Category:    "games",
 			Kind:        "game",
 			Title:       d.Title,
 			TitleNorm:   watchlist.Normalize(d.Title),
@@ -27,10 +28,11 @@ func saveCheapSharkDeals(db *database.DB, filtered []deals.CheapSharkDeal) {
 			Discount:    int(math.Floor(d.Savings)),
 			Rating:      d.DealRating,
 			URL:         d.DealURL,
+			ImageURL:    d.ImageURL,
 			IsHistLow:   database.Bool(d.IsHistLow),
 			IsFree:      database.Bool(d.SalePrice == 0),
 		}
-		if err := db.SaveDeal(deal); err != nil {
+		if err := db.SaveDealWithVerdict(deal); err != nil {
 			slog.Warn("failed to save cheapshark deal for web", "title", d.Title, "error", err)
 		}
 	}
@@ -46,6 +48,7 @@ func saveITADDeals(db *database.DB, filtered []deals.ITADDeal) {
 		deal := database.Deal{
 			DedupID:     d.DedupID,
 			Source:      "itad",
+			Category:    "games",
 			Kind:        kind,
 			Title:       d.Title,
 			TitleNorm:   watchlist.Normalize(d.Title),
@@ -58,8 +61,34 @@ func saveITADDeals(db *database.DB, filtered []deals.ITADDeal) {
 			IsFree:      database.Bool(d.Price == 0),
 			ExpiresAt:   d.Expiry,
 		}
-		if err := db.SaveDeal(deal); err != nil {
+		if err := db.SaveDealWithVerdict(deal); err != nil {
 			slog.Warn("failed to save itad deal for web", "title", d.Title, "error", err)
+		}
+	}
+}
+
+// saveWebDeals records deals scraped from RSS aggregators (DealNews, Slickdeals,
+// …). These populate the web gallery's non-game categories (tech, clothing,
+// home, …); they are intentionally not posted to Matrix, which stays focused on
+// game deals.
+func saveWebDeals(db *database.DB, items []deals.WebDeal) {
+	for _, d := range items {
+		deal := database.Deal{
+			DedupID:   d.DedupID,
+			Source:    d.Source,
+			Category:  d.Category,
+			Kind:      "deal",
+			Title:     d.Title,
+			TitleNorm: watchlist.Normalize(d.Title),
+			Store:     d.Store,
+			SalePrice: d.Price,
+			Discount:  d.Discount,
+			URL:       d.URL,
+			ImageURL:  d.ImageURL,
+			IsFree:    database.Bool(d.IsFree),
+		}
+		if err := db.SaveDealWithVerdict(deal); err != nil {
+			slog.Warn("failed to save web deal", "source", d.Source, "title", d.Title, "error", err)
 		}
 	}
 }
@@ -70,17 +99,19 @@ func saveEpicFreeGames(db *database.DB, games []deals.EpicFreeGame) {
 		deal := database.Deal{
 			DedupID:   g.DedupID,
 			Source:    "epic",
+			Category:  "games",
 			Kind:      "free",
 			Title:     g.Title,
 			TitleNorm: watchlist.Normalize(g.Title),
 			Store:     "Epic Games",
 			Discount:  100,
 			URL:       g.URL,
+			ImageURL:  g.ImageURL,
 			IsFree:    true,
 			Upcoming:  database.Bool(g.Upcoming),
 			ExpiresAt: g.EndDate,
 		}
-		if err := db.SaveDeal(deal); err != nil {
+		if err := db.SaveDealWithVerdict(deal); err != nil {
 			slog.Warn("failed to save epic game for web", "title", g.Title, "error", err)
 		}
 	}

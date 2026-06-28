@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -13,6 +14,7 @@ type EpicFreeGame struct {
 	Title    string
 	Desc     string
 	URL      string
+	ImageURL string
 	EndDate  *time.Time
 	Upcoming bool
 	DedupID  string
@@ -34,6 +36,10 @@ type epicElement struct {
 	Description string `json:"description"`
 	ProductSlug string `json:"productSlug"`
 	URLSlug     string `json:"urlSlug"`
+	KeyImages   []struct {
+		Type string `json:"type"`
+		URL  string `json:"url"`
+	} `json:"keyImages"`
 	CatalogNs   struct {
 		Mappings []struct {
 			PageSlug string `json:"pageSlug"`
@@ -82,18 +88,30 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 			continue
 		}
 
-		slug := elem.ProductSlug
+		// Prefer the canonical product-page slug from catalogNs mappings.
+		// productSlug often carries a "/home" suffix (or other path) that
+		// breaks the URL, and urlSlug is frequently an opaque GUID hash that
+		// does not resolve to a product page, so use those only as fallbacks.
+		var slug string
+		if len(elem.CatalogNs.Mappings) > 0 {
+			slug = elem.CatalogNs.Mappings[0].PageSlug
+		}
+		if slug == "" {
+			slug = elem.ProductSlug
+		}
 		if slug == "" {
 			slug = elem.URLSlug
 		}
-		if slug == "" && len(elem.CatalogNs.Mappings) > 0 {
-			slug = elem.CatalogNs.Mappings[0].PageSlug
+		// Strip any trailing path (e.g. "my-game/home") to the base slug.
+		if i := strings.IndexByte(slug, '/'); i >= 0 {
+			slug = slug[:i]
 		}
 		if slug == "" {
 			slog.Warn("epic: skipping game with no slug", "title", elem.Title, "id", elem.ID)
 			continue
 		}
 		storeURL := fmt.Sprintf("https://store.epicgames.com/en-US/p/%s", slug)
+		imageURL := epicImage(elem)
 
 		// Check current free offers
 		for _, group := range elem.Promotions.PromotionalOffers {
@@ -117,6 +135,7 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 					Title:    elem.Title,
 					Desc:     elem.Description,
 					URL:      storeURL,
+					ImageURL: imageURL,
 					Upcoming: false,
 					DedupID:  fmt.Sprintf("epic-current-%s", elem.ID),
 				}
@@ -139,6 +158,7 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 					Title:    elem.Title,
 					Desc:     elem.Description,
 					URL:      storeURL,
+					ImageURL: imageURL,
 					Upcoming: true,
 					DedupID:  fmt.Sprintf("epic-upcoming-%s", elem.ID),
 				}
@@ -153,4 +173,23 @@ func FetchEpicFreeGames() ([]EpicFreeGame, error) {
 	}
 
 	return games, nil
+}
+
+// epicImage picks a card thumbnail from an element's keyImages, preferring a
+// wide offer image, then a thumbnail, then any http(s) image. Returns "" when
+// none is present so the card renders image-less.
+func epicImage(elem epicElement) string {
+	for _, want := range []string{"OfferImageWide", "DieselStoreFrontWide", "Thumbnail"} {
+		for _, img := range elem.KeyImages {
+			if img.Type == want && isHTTPURL(img.URL) {
+				return img.URL
+			}
+		}
+	}
+	for _, img := range elem.KeyImages {
+		if isHTTPURL(img.URL) {
+			return img.URL
+		}
+	}
+	return ""
 }

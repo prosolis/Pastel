@@ -29,7 +29,7 @@ func newTestServer(t *testing.T) *Server {
 	}
 
 	cfg := &config.Config{WebListenAddr: ":0"}
-	return New(cfg, db, watchlist.NewStore(db.RawDB()))
+	return New(cfg, db, watchlist.NewStore(db.RawDB()), nil)
 }
 
 func TestDealsEndpoint(t *testing.T) {
