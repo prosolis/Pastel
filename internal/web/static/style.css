@@ -306,6 +306,25 @@ body {
 .card:hover::before { opacity: 1; }
 .card:hover::after { transform: rotate(8deg) translateX(360%); }
 
+/* Full-bleed thumbnail at the top of a card. Negative margins cancel the card
+   padding so the image runs edge-to-edge; the card's own overflow:hidden +
+   radius round the top corners. A fixed aspect ratio keeps the grid uniform
+   whether or not a card has an image. */
+.thumb {
+  margin: -18px -18px 2px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: linear-gradient(135deg, #ffe6f3, #efe7ff);
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s var(--spring);
+}
+.card:hover .thumb img { transform: scale(1.06); }
+
 .card h3 { margin: 0; font-family: "Mochiy Pop One", "Nunito", sans-serif; font-size: 0.96rem; line-height: 1.35; }
 .card .meta { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
 .price { font-size: 1.2rem; color: var(--accent-deep); font-family: "Mochiy Pop One", "Nunito", sans-serif; }

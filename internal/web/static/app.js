@@ -303,12 +303,24 @@ function cardHTML(d) {
     : "";
 
   // Deal URLs come from external sources; only emit a link for a benign
-  // http(s) scheme so a javascript:/data: URL can't run as script (XSS).
+  // http(s) scheme so a javascript:/data: URL can't run as script (XSS). The
+  // same guard covers the thumbnail src so a hostile image URL can't smuggle a
+  // javascript:/data: scheme.
   const href = safeURL(d.url);
+  const imgURL = safeURL(d.imageUrl);
+
+  // Lazy thumbnail. No image is a real case (most RSS deals, all ITAD) — those
+  // cards stay text-only rather than showing a placeholder. If the URL 404s or
+  // hotlink-blocks, onerror removes the figure so the grid never shows a broken
+  // image icon.
+  const thumb = imgURL
+    ? `<figure class="thumb"><img src="${escapeAttr(imgURL)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.thumb').remove()"></figure>`
+    : "";
 
   const div = document.createElement("div");
   div.className = "card";
   div.innerHTML = `
+    ${thumb}
     <div class="badges">${badges.join("")}</div>
     <h3>${escapeHTML(d.title)}</h3>
     <div class="meta">${escapeHTML(d.store || d.source)}${d.rating ? ` · ★ ${d.rating}` : ""}</div>

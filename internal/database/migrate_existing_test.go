@@ -59,6 +59,16 @@ func TestMigrateAddsCategoryToExistingDB(t *testing.T) {
 		t.Fatalf("reaction_count = %d after one reaction, want 1", reacts)
 	}
 
+	// Phase 4 (deal images): image_url reaches the pre-existing deals table and
+	// backfills to '' so older rows simply render without a thumbnail.
+	var img string
+	if err := db.RawDB().Get(&img, "SELECT image_url FROM deals WHERE dedup_id='x'"); err != nil {
+		t.Fatalf("image_url column missing after migrate: %v", err)
+	}
+	if img != "" {
+		t.Fatalf("image_url = %q after migrate, want empty", img)
+	}
+
 	// Idempotent: a second Open must not error.
 	db.Close()
 	db2, err := Open(path)

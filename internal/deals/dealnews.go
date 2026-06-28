@@ -92,6 +92,7 @@ func dealNewsItem(item rssItem, category string) (WebDeal, bool) {
 		Price:    price,
 		Discount: discount,
 		IsFree:   isFree,
+		ImageURL: imageFromItem(item),
 		PostedAt: parseRSSTime(item.PubDate),
 		DedupID:  "dealnews-" + dealNewsID(id),
 	}, true

@@ -21,6 +21,76 @@ const slickItemXML = `<rss><channel><item>
   <pubDate>Sat, 20 Jun 26 15:41:19 +0000</pubDate>
 </item></channel></rss>`
 
+// TestImageFromItem checks the image-source precedence: a structured
+// media:content beats media:thumbnail beats enclosure beats a scraped <img>, a
+// non-image enclosure is ignored in favor of the <img> fallback, an entity-
+// encoded <img src> is decoded, and an item with no image yields "".
+func TestImageFromItem(t *testing.T) {
+	cases := []struct {
+		name string
+		xml  string
+		want string
+	}{
+		{
+			"media:content preferred",
+			`<rss><channel><item>
+			  <media:content url="https://cdn.example/wide.jpg" type="image/jpeg"/>
+			  <media:thumbnail url="https://cdn.example/thumb.jpg"/>
+			  <description>&lt;img src="https://cdn.example/body.jpg"&gt;</description>
+			</item></channel></rss>`,
+			"https://cdn.example/wide.jpg",
+		},
+		{
+			"media:thumbnail when no media:content",
+			`<rss><channel><item>
+			  <media:thumbnail url="https://cdn.example/thumb.jpg"/>
+			  <enclosure url="https://cdn.example/enc.jpg" type="image/jpeg"/>
+			</item></channel></rss>`,
+			"https://cdn.example/thumb.jpg",
+		},
+		{
+			"image enclosure when no media",
+			`<rss><channel><item>
+			  <enclosure url="https://cdn.example/enc.jpg" type="image/jpeg"/>
+			</item></channel></rss>`,
+			"https://cdn.example/enc.jpg",
+		},
+		{
+			"non-image enclosure ignored, img fallback used",
+			`<rss><channel><item>
+			  <enclosure url="https://cdn.example/track.mp3" type="audio/mpeg"/>
+			  <description>&lt;p&gt;&lt;img src=&quot;https://cdn.example/body.png&quot;&gt;Deal!&lt;/p&gt;</description>
+			</item></channel></rss>`,
+			"https://cdn.example/body.png",
+		},
+		{
+			"no image yields empty",
+			`<rss><channel><item>
+			  <description>Plain text deal, no image at all.</description>
+			</item></channel></rss>`,
+			"",
+		},
+		{
+			"non-http img src rejected",
+			`<rss><channel><item>
+			  <description>&lt;img src="data:image/png;base64,AAAA"&gt;</description>
+			</item></channel></rss>`,
+			"",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			feed, err := unmarshalRSS(tc.xml)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got := imageFromItem(feed.Items[0]); got != tc.want {
+				t.Errorf("imageFromItem = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDealNewsItemParsing(t *testing.T) {
 	feed, err := unmarshalRSS(dealNewsItemXML)
 	if err != nil {

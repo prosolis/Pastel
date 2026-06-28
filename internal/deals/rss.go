@@ -3,6 +3,7 @@ package deals
 import (
 	"encoding/xml"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -26,6 +27,7 @@ type WebDeal struct {
 	Price    float64 // 0 when none could be parsed
 	Discount int     // percent off parsed from the text, else 0
 	IsFree   bool
+	ImageURL string // thumbnail extracted from media/enclosure/<img>, "" when none
 	PostedAt time.Time
 	DedupID  string
 }
@@ -45,6 +47,28 @@ type rssItem struct {
 	GUID        string `xml:"guid"`
 	PubDate     string `xml:"pubDate"`
 	Category    string `xml:"category"`
+	// Image carriers, matched by local name (namespace ignored): <media:content>
+	// and <media:thumbnail> (Media RSS), <enclosure> (RSS core), and
+	// <content:encoded> (the full HTML body, scanned for an <img> as a last resort).
+	MediaContent   []rssMedia    `xml:"content"`
+	MediaThumbnail []rssMedia    `xml:"thumbnail"`
+	Enclosures     []rssEnclosure `xml:"enclosure"`
+	ContentEncoded string        `xml:"encoded"`
+}
+
+// rssMedia models a <media:content>/<media:thumbnail> element; only the url and
+// (optionally) type/medium attributes matter for picking an image.
+type rssMedia struct {
+	URL    string `xml:"url,attr"`
+	Type   string `xml:"type,attr"`
+	Medium string `xml:"medium,attr"`
+}
+
+// rssEnclosure models an RSS <enclosure>; an image enclosure has a type like
+// "image/jpeg".
+type rssEnclosure struct {
+	URL  string `xml:"url,attr"`
+	Type string `xml:"type,attr"`
 }
 
 const (
@@ -67,7 +91,55 @@ var (
 	reFreePerk = regexp.MustCompile(`(?i)free\s+(?:shipping|ship|s\s*&\s*h|s&h|returns?|delivery|in-store pickup|pickup|trial|gift card|gift)`)
 	// Strips HTML tags so we can scan the plain text of a description.
 	reTags = regexp.MustCompile(`<[^>]*>`)
+	// First <img src="..."> in an HTML body, used as the last-resort image source.
+	reImgSrc = regexp.MustCompile(`(?i)<img[^>]+src=["']([^"']+)["']`)
 )
+
+// imageFromItem extracts a thumbnail URL from an RSS item, preferring structured
+// Media RSS/enclosure elements over scraping an <img> out of the HTML body.
+// Returns "" when no http(s) image can be found, leaving the card image-less.
+func imageFromItem(item rssItem) string {
+	// 1. <media:content> / <media:thumbnail> with an image (or unspecified) type.
+	for _, m := range append(append([]rssMedia{}, item.MediaContent...), item.MediaThumbnail...) {
+		if isImageURL(m.URL, m.Type, m.Medium) {
+			return m.URL
+		}
+	}
+	// 2. An <enclosure> declared as an image.
+	for _, e := range item.Enclosures {
+		if isImageURL(e.URL, e.Type, "") {
+			return e.URL
+		}
+	}
+	// 3. First <img> in the description or full content body.
+	for _, body := range []string{item.Description, item.ContentEncoded} {
+		if m := reImgSrc.FindStringSubmatch(body); m != nil {
+			if u := strings.TrimSpace(html.UnescapeString(m[1])); isHTTPURL(u) {
+				return u
+			}
+		}
+	}
+	return ""
+}
+
+// isImageURL reports whether a media/enclosure entry should be treated as an
+// image: an http(s) URL whose declared type/medium is an image, or unspecified
+// (many feeds omit the type on media:thumbnail).
+func isImageURL(u, typ, medium string) bool {
+	if !isHTTPURL(u) {
+		return false
+	}
+	if typ == "" && medium == "" {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(typ), "image") || strings.EqualFold(medium, "image")
+}
+
+// isHTTPURL reports whether u is a non-empty http(s) URL. The frontend re-guards
+// the src, but filtering here keeps junk out of the DB.
+func isHTTPURL(u string) bool {
+	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
+}
 
 // fetchRSS GETs an RSS feed and decodes it, retrying with a fixed backoff on
 // transient failures. Aggregator feeds are not aggressively IP-throttled the way

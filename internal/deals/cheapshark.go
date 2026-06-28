@@ -30,6 +30,7 @@ type CheapSharkDeal struct {
 	LastChange   int64
 	SteamAppID   string
 	DealURL      string
+	ImageURL     string
 	IsHistLow    bool
 	DedupID      string
 }
@@ -45,6 +46,7 @@ type cheapSharkRaw struct {
 	StoreID    string `json:"storeID"`
 	LastChange int64  `json:"lastChange"`
 	SteamAppID string `json:"steamAppID"`
+	Thumb      string `json:"thumb"`
 }
 
 // FetchCheapSharkDeals fetches deals from CheapShark API using multiple
@@ -136,6 +138,7 @@ func fetchCheapSharkPage(reqURL string) ([]CheapSharkDeal, error) {
 			LastChange:  d.LastChange,
 			SteamAppID:  d.SteamAppID,
 			DealURL:     fmt.Sprintf("https://www.cheapshark.com/redirect?dealID=%s", d.DealID),
+			ImageURL:    d.Thumb,
 			DedupID:     fmt.Sprintf("cheapshark-%s-%d", d.GameID, d.LastChange),
 		})
 	}
@@ -195,6 +198,7 @@ func SearchCheapSharkDeals(query string, maxResults int) ([]CheapSharkDeal, erro
 			StoreID:    d.StoreID,
 			StoreName:  storeName,
 			DealURL:    fmt.Sprintf("https://www.cheapshark.com/redirect?dealID=%s", d.DealID),
+			ImageURL:   d.Thumb,
 		})
 	}
 

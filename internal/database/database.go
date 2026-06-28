@@ -163,7 +163,8 @@ func (d *DB) migrate() error {
 			posted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			event_id         TEXT NOT NULL DEFAULT '',
-			reaction_count   INTEGER NOT NULL DEFAULT 0
+			reaction_count   INTEGER NOT NULL DEFAULT 0,
+			image_url        TEXT NOT NULL DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_deals_posted ON deals(posted_at);
 		CREATE INDEX IF NOT EXISTS idx_deals_source ON deals(source);
@@ -251,6 +252,12 @@ func (d *DB) migrate() error {
 		return err
 	}
 	if err := d.addColumnIfMissing("deals", "reaction_count", "reaction_count INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// Phase 4 (deal images): image_url is the per-source thumbnail extracted at
+	// fetch time (CheapShark thumb, RSS media, Epic keyImages); '' when the source
+	// carries no image, in which case the gallery falls back to the mascot art.
+	if err := d.addColumnIfMissing("deals", "image_url", "image_url TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	return nil
@@ -343,6 +350,7 @@ type Deal struct {
 	Discount    int        `db:"discount" json:"discount"`
 	Rating      float64    `db:"rating" json:"rating"`
 	URL         string     `db:"url" json:"url"`
+	ImageURL    string     `db:"image_url" json:"imageUrl,omitempty"` // per-source thumbnail; "" → mascot fallback
 	IsHistLow   Bool       `db:"is_hist_low" json:"isHistLow"`
 	IsFree      Bool       `db:"is_free" json:"isFree"`
 	Upcoming    Bool       `db:"upcoming" json:"upcoming"`
@@ -379,12 +387,12 @@ func (d *DB) SaveDeal(deal Deal) error {
 	_, err := d.db.NamedExec(`
 		INSERT INTO deals (
 			dedup_id, source, category, kind, title, title_normalized, store,
-			sale_price, normal_price, discount, rating, url,
+			sale_price, normal_price, discount, rating, url, image_url,
 			is_hist_low, is_free, upcoming, expires_at,
 			verdict, price_low, price_suspect
 		) VALUES (
 			:dedup_id, :source, :category, :kind, :title, :title_normalized, :store,
-			:sale_price, :normal_price, :discount, :rating, :url,
+			:sale_price, :normal_price, :discount, :rating, :url, :image_url,
 			:is_hist_low, :is_free, :upcoming, :expires_at,
 			:verdict, :price_low, :price_suspect
 		)
@@ -395,6 +403,7 @@ func (d *DB) SaveDeal(deal Deal) error {
 			discount      = excluded.discount,
 			rating        = excluded.rating,
 			url           = excluded.url,
+			image_url     = excluded.image_url,
 			is_hist_low   = excluded.is_hist_low,
 			is_free       = excluded.is_free,
 			upcoming      = excluded.upcoming,
@@ -466,7 +475,7 @@ func ClampDealLimit(limit int) int {
 // QueryDeals and TopDealsSince so the two SELECTs can't drift. watcher_count is
 // not a column — callers that need it append it to the SELECT.
 const dealColumns = "dedup_id, source, category, kind, title, title_normalized, store, " +
-	"sale_price, normal_price, discount, rating, url, is_hist_low, is_free, " +
+	"sale_price, normal_price, discount, rating, url, image_url, is_hist_low, is_free, " +
 	"upcoming, expires_at, posted_at, verdict, price_low, price_suspect, reaction_count"
 
 // DealFilter describes the query the web interface wants to run against deals.

@@ -18,8 +18,8 @@ phases are tightened immediately before their build.
 | 1 | Price verdicts & trust badges | ✅ Done — 2026-06-28 (`4a9fc57`) |
 | 2 | Watchlist 2.0 | ✅ Done — 2026-06-28 (`49b6daf`) |
 | 3 | Community layer | ✅ Done — 2026-06-28 |
-| 4 | Deal images | ⬜ Next — per-source image extraction + card thumbnails |
-| 5 | Coverage & reach | ⬜ Planned |
+| 4 | Deal images | ✅ Done — 2026-06-28 |
+| 5 | Coverage & reach | ⬜ Next — free super-tab, new sources, PWA |
 
 Branch: `feat/price-verdicts`.
 
@@ -170,36 +170,48 @@ plumbing.
 account, confirm the count increments and Heat reorders) — needs the running bot;
 do on next deploy, same as the Phase 2 DM smoke test.
 
-## Phase 4 — Deal images  ⬜ *(tighten before build — next up)*
+## Phase 4 — Deal images  ✅
 
-**Goal:** Give the gallery actual item imagery. Today every source struct lacks
-an image, so cards are text-only and read bland. This is self-contained and
-high-impact — the whole phase is "thread an image URL from each source to the
-card, degrade gracefully where there isn't one."
+**Goal:** Give the gallery actual item imagery. Cards were text-only because no
+source struct carried an image. This phase threaded an image URL from each
+source to the card and degrades to a plain text-only card where there isn't one.
 
-- **Per-source extraction (the bulk of the work).** No source carries an image
-  field yet; add one to each and populate it:
-  - **CheapShark** — already returns a `thumb` field in the raw JSON; just parse
-    and map it (cheapest win, do first).
-  - **RSS (DealNews, Slickdeals)** — pull `media:content` / `media:thumbnail` /
-    `enclosure[@type^="image"]`, falling back to the first `<img src>` in
-    `description`/`content:encoded`. Extend `rssItem` with the media elements
-    (matched by local name like the existing namespaced fields).
-  - **Epic** — `keyImages` in the GraphQL response (prefer `OfferImageWide` /
-    `Thumbnail`).
-  - **ITAD** — best-effort asset/banner if the API exposes one; otherwise leave
-    blank (the fallback covers it).
-- **Schema + plumbing.** Additive `deals.image_url TEXT` column (idempotent
-  `addColumnIfMissing`); add `ImageURL` to the source structs, the `database.Deal`
-  struct (+ `dealColumns`/SELECT), and every `save*Deals` mapper in `persist.go`.
-- **Frontend.** A lazy-loaded (`loading="lazy"`) thumbnail at the top of the card,
-  run through the existing `safeURL()` guard (only http(s)); on missing/failed
-  load (`onerror`) fall back to the Pastel mascot art so the grid never shows
-  broken-image icons. Keep the pastel aesthetic — rounded top corners, object-fit
-  cover, fixed aspect ratio so cards stay uniform.
-- **Verify:** load the gallery and confirm thumbnails render per source, the
-  fallback shows for an image-less deal, and no mixed-content/XSS via a hostile
-  URL (the `safeURL` guard already covers the link; reuse it for `src`).
+### Built (2026-06-28)
+
+- **Per-source extraction.** Each source struct now carries `ImageURL`, populated
+  at fetch time:
+  - **CheapShark** — maps the `thumb` field from the raw JSON (`cheapshark.go`),
+    in both the deals feed and the search path.
+  - **RSS (DealNews, Slickdeals)** — `rss.go` `imageFromItem()` picks, in order,
+    `media:content` → `media:thumbnail` → an image `enclosure` → the first
+    `<img src>` in `description`/`content:encoded`. `rssItem` gained `rssMedia`/
+    `rssEnclosure` fields matched by local name; non-image enclosures and
+    non-http(s) srcs are rejected (`isImageURL`/`isHTTPURL`).
+  - **Epic** — `epicImage()` prefers `OfferImageWide` → `DieselStoreFrontWide` →
+    `Thumbnail` → any http(s) `keyImages` entry.
+  - **ITAD** — left blank (the v2 deals API exposes no asset in our struct); the
+    text-only card covers it.
+- **Schema + plumbing.** Additive `deals.image_url TEXT NOT NULL DEFAULT ''`
+  column (idempotent `addColumnIfMissing` + in the fresh `CREATE TABLE`);
+  `ImageURL` added to the `database.Deal` struct, `dealColumns` (so both
+  `QueryDeals` and `TopDealsSince` select it), `SaveDeal`'s INSERT/UPDATE, and
+  every `save*Deals` mapper in `persist.go`.
+- **Frontend.** A lazy (`loading="lazy" decoding="async"`) full-bleed thumbnail
+  at the top of the card (`cardHTML` in `app.js`), guarded by the existing
+  `safeURL()` (http(s) only — covers `src` as well as the link). **No mascot
+  fallback:** an image-less deal renders text-only, and a failed/404 load
+  (`onerror="this.closest('.thumb').remove()"`) removes the figure so the grid
+  never shows a broken-image icon. CSS `.thumb` (`style.css`): negative margins
+  to bleed past the card padding (the card's `overflow:hidden`+radius rounds the
+  top corners), fixed 16/9 `aspect-ratio`, `object-fit:cover`, gentle hover zoom.
+- **Tests:** `rss_test.go` `TestImageFromItem` covers the precedence chain,
+  non-image-enclosure skip, entity-decoded `<img>`, `data:` rejection, and the
+  no-image case; the existing-DB migration guard asserts `image_url` is added and
+  backfills to `''`.
+
+**Verified:** rendered the gallery with a seeded DB — a real Steam header and a
+local image render as rounded 16:9 thumbnails, an image-less deal stays text-only,
+and a deliberately-broken URL self-removes via `onerror` (no broken icon).
 
 ## Phase 5 — Coverage & reach  ⬜ *(tighten before build)*
 
@@ -224,7 +236,7 @@ card, degrade gracefully where there isn't one."
 1. ✅ Phase 1 — implemented, tested, committed.
 2. ✅ Phase 2 — implemented, tested, committed.
 3. ✅ Phase 3 — implemented & tested; live Matrix smoke test on next deploy.
-4. Phase 4 (images) — CheapShark thumb first, then RSS/Epic/ITAD, then card UI.
+4. ✅ Phase 4 (images) — per-source extraction + lazy card thumbnails, verified.
 5. Phase 5 — sources incrementally; PWA as its own sub-phase.
 
 Each phase is independently shippable and leaves the service working.

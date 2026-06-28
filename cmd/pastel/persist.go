@@ -28,6 +28,7 @@ func saveCheapSharkDeals(db *database.DB, filtered []deals.CheapSharkDeal) {
 			Discount:    int(math.Floor(d.Savings)),
 			Rating:      d.DealRating,
 			URL:         d.DealURL,
+			ImageURL:    d.ImageURL,
 			IsHistLow:   database.Bool(d.IsHistLow),
 			IsFree:      database.Bool(d.SalePrice == 0),
 		}
@@ -83,6 +84,7 @@ func saveWebDeals(db *database.DB, items []deals.WebDeal) {
 			SalePrice: d.Price,
 			Discount:  d.Discount,
 			URL:       d.URL,
+			ImageURL:  d.ImageURL,
 			IsFree:    database.Bool(d.IsFree),
 		}
 		if err := db.SaveDealWithVerdict(deal); err != nil {
@@ -104,6 +106,7 @@ func saveEpicFreeGames(db *database.DB, games []deals.EpicFreeGame) {
 			Store:     "Epic Games",
 			Discount:  100,
 			URL:       g.URL,
+			ImageURL:  g.ImageURL,
 			IsFree:    true,
 			Upcoming:  database.Bool(g.Upcoming),
 			ExpiresAt: g.EndDate,
