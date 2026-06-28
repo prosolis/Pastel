@@ -143,6 +143,19 @@ func (d *DB) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_deals_source ON deals(source);
 		CREATE INDEX IF NOT EXISTS idx_deals_title_norm ON deals(title_normalized);
 
+		-- price_history records every (non-free) price Pastel has observed for a
+		-- product, keyed by a stable product key (see PriceKey). It is the basis
+		-- for the trust "verdict": dedup_id changes when the discount changes, so
+		-- per-row history can't accumulate — this table can.
+		CREATE TABLE IF NOT EXISTS price_history (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			price_key  TEXT NOT NULL,
+			source     TEXT NOT NULL,
+			sale_price REAL NOT NULL,
+			seen_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_price_history_key ON price_history(price_key, seen_at);
+
 		-- web_sessions backs OIDC-authenticated web sessions.
 		CREATE TABLE IF NOT EXISTS web_sessions (
 			token        TEXT PRIMARY KEY,
@@ -164,6 +177,18 @@ func (d *DB) migrate() error {
 		return err
 	}
 	if _, err := d.db.Exec(`CREATE INDEX IF NOT EXISTS idx_deals_category ON deals(category)`); err != nil {
+		return err
+	}
+	// Phase 1: price-verdict columns. verdict is the trust badge bucket,
+	// price_low is the lowest sale price Pastel has ever observed for the
+	// product, price_suspect flags a likely inflated discount.
+	if err := d.addColumnIfMissing("deals", "verdict", "verdict TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("deals", "price_low", "price_low REAL"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("deals", "price_suspect", "price_suspect INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	return nil
@@ -261,6 +286,21 @@ type Deal struct {
 	Upcoming    Bool       `db:"upcoming" json:"upcoming"`
 	ExpiresAt   *time.Time `db:"expires_at" json:"expiresAt,omitempty"`
 	PostedAt    time.Time  `db:"posted_at" json:"postedAt"`
+	// Phase 1 trust signals. Verdict is "" until Pastel has price history.
+	Verdict      string  `db:"verdict" json:"verdict,omitempty"`              // all-time-low | good | meh | ""
+	PriceLow     float64 `db:"price_low" json:"priceLow,omitempty"`          // lowest observed sale price
+	PriceSuspect Bool    `db:"price_suspect" json:"priceSuspect,omitempty"`  // likely inflated discount
+}
+
+// PriceKey is the stable product identity used to accumulate price history.
+// dedup_id is unsuitable because it embeds the discount/timestamp and so
+// changes whenever the price moves; the normalized title (plus category, to
+// avoid cross-category collisions) is stable across re-sees of the same item.
+func PriceKey(category, titleNorm string) string {
+	if category == "" {
+		category = "games"
+	}
+	return category + "|" + titleNorm
 }
 
 // SaveDeal upserts a deal's full data. The first insert sets posted_at; later
@@ -273,26 +313,69 @@ func (d *DB) SaveDeal(deal Deal) error {
 		INSERT INTO deals (
 			dedup_id, source, category, kind, title, title_normalized, store,
 			sale_price, normal_price, discount, rating, url,
-			is_hist_low, is_free, upcoming, expires_at
+			is_hist_low, is_free, upcoming, expires_at,
+			verdict, price_low, price_suspect
 		) VALUES (
 			:dedup_id, :source, :category, :kind, :title, :title_normalized, :store,
 			:sale_price, :normal_price, :discount, :rating, :url,
-			:is_hist_low, :is_free, :upcoming, :expires_at
+			:is_hist_low, :is_free, :upcoming, :expires_at,
+			:verdict, :price_low, :price_suspect
 		)
 		ON CONFLICT(dedup_id) DO UPDATE SET
-			store        = excluded.store,
-			sale_price   = excluded.sale_price,
-			normal_price = excluded.normal_price,
-			discount     = excluded.discount,
-			rating       = excluded.rating,
-			url          = excluded.url,
-			is_hist_low  = excluded.is_hist_low,
-			is_free      = excluded.is_free,
-			upcoming     = excluded.upcoming,
-			expires_at   = excluded.expires_at,
-			updated_at   = CURRENT_TIMESTAMP
+			store         = excluded.store,
+			sale_price    = excluded.sale_price,
+			normal_price  = excluded.normal_price,
+			discount      = excluded.discount,
+			rating        = excluded.rating,
+			url           = excluded.url,
+			is_hist_low   = excluded.is_hist_low,
+			is_free       = excluded.is_free,
+			upcoming      = excluded.upcoming,
+			expires_at    = excluded.expires_at,
+			verdict       = excluded.verdict,
+			price_low     = excluded.price_low,
+			price_suspect = excluded.price_suspect,
+			updated_at    = CURRENT_TIMESTAMP
 	`, &deal)
 	return err
+}
+
+// RecordPrice appends a price observation for a product key. Free/zero prices
+// are ignored so giveaways don't poison the historical low. Call this before
+// upserting a deal so LowestPrice reflects the current sighting.
+func (d *DB) RecordPrice(priceKey, source string, salePrice float64) error {
+	if priceKey == "" || salePrice <= 0 {
+		return nil
+	}
+	_, err := d.db.Exec(
+		"INSERT INTO price_history (price_key, source, sale_price) VALUES (?, ?, ?)",
+		priceKey, source, salePrice,
+	)
+	return err
+}
+
+// LowestPrice returns the lowest observed sale price for a product key and
+// whether any history exists. Used to compute the trust verdict.
+func (d *DB) LowestPrice(priceKey string) (float64, bool) {
+	var low sql.NullFloat64
+	if err := d.db.Get(&low, "SELECT MIN(sale_price) FROM price_history WHERE price_key = ?", priceKey); err != nil {
+		return 0, false
+	}
+	return low.Float64, low.Valid
+}
+
+// MedianPrice returns the median observed sale price for a product key and
+// whether any history exists, used to detect inflated "normal" prices.
+func (d *DB) MedianPrice(priceKey string) (float64, bool) {
+	var prices []float64
+	if err := d.db.Select(&prices, "SELECT sale_price FROM price_history WHERE price_key = ? ORDER BY sale_price", priceKey); err != nil || len(prices) == 0 {
+		return 0, false
+	}
+	n := len(prices)
+	if n%2 == 1 {
+		return prices[n/2], true
+	}
+	return (prices[n/2-1] + prices[n/2]) / 2, true
 }
 
 // Deal pagination bounds. The web API clamps client-supplied page sizes to
@@ -323,7 +406,8 @@ type DealFilter struct {
 	MaxPrice    float64 // 0 = no limit
 	HistLowOnly bool
 	FreeOnly    bool
-	Sort        string // newest | discount | price_asc | price_desc | rating
+	GreatOnly   bool   // only verdict all-time-low or good
+	Sort        string // newest | discount | price_asc | price_desc | rating | verdict
 	Limit       int
 	Offset      int
 }
@@ -376,6 +460,9 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	if f.FreeOnly {
 		where = append(where, "is_free = 1")
 	}
+	if f.GreatOnly {
+		where = append(where, "verdict IN ('all-time-low', 'good')")
+	}
 
 	clause := ""
 	if len(where) > 0 {
@@ -391,7 +478,7 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	limit := ClampDealLimit(f.Limit)
 	query := "SELECT dedup_id, source, category, kind, title, title_normalized, store, " +
 		"sale_price, normal_price, discount, rating, url, is_hist_low, is_free, " +
-		"upcoming, expires_at, posted_at FROM deals" + clause + order + " LIMIT ? OFFSET ?"
+		"upcoming, expires_at, posted_at, verdict, price_low, price_suspect FROM deals" + clause + order + " LIMIT ? OFFSET ?"
 	args = append(args, limit, f.Offset)
 
 	var deals []Deal
@@ -476,6 +563,15 @@ func (d *DB) PruneDealsTable(days int) error {
 	return err
 }
 
+// PrunePriceHistory removes price observations older than the given number of
+// days. Keep a longer window than the deals table (~180d) so "all-time low"
+// stays meaningful while remaining bounded.
+func (d *DB) PrunePriceHistory(days int) error {
+	cutoff := time.Now().AddDate(0, 0, -days).UTC().Format(time.RFC3339)
+	_, err := d.db.Exec("DELETE FROM price_history WHERE seen_at < ?", cutoff)
+	return err
+}
+
 func orderClause(sort string) string {
 	switch sort {
 	case "discount":
@@ -486,6 +582,10 @@ func orderClause(sort string) string {
 		return " ORDER BY sale_price DESC, posted_at DESC"
 	case "rating":
 		return " ORDER BY rating DESC, posted_at DESC"
+	case "verdict":
+		// Best deals first: all-time-low, then good, then everything else,
+		// newest within each bucket.
+		return " ORDER BY CASE verdict WHEN 'all-time-low' THEN 0 WHEN 'good' THEN 1 ELSE 2 END, posted_at DESC"
 	default: // newest
 		return " ORDER BY posted_at DESC"
 	}

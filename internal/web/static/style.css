@@ -333,6 +333,20 @@ body {
   animation: shine 2.4s linear infinite;
   background-size: 200% 100%;
 }
+.badge.verdict-atl {
+  background: linear-gradient(120deg, #ff9ec7, var(--accent-deep));
+  color: #fff;
+  animation: pop 0.4s var(--spring) both;
+}
+.badge.verdict-good {
+  background: linear-gradient(120deg, #a7e8c6, var(--good));
+  color: #06513a;
+}
+.badge.suspect {
+  background: linear-gradient(120deg, #ffd6a5, #f0883e);
+  color: #5c2e00;
+}
+.seen-low { font-size: 0.74rem; color: var(--accent-2-deep); opacity: 0.85; margin-top: 2px; }
 @keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 @keyframes shine { 0% { background-position: 0 0; } 100% { background-position: 200% 0; } }
 

@@ -61,6 +61,7 @@ func (s *Server) handleDeals(w http.ResponseWriter, r *http.Request) {
 		MaxPrice:    maxPrice,
 		HistLowOnly: queryBool(q.Get("hist_low")),
 		FreeOnly:    queryBool(q.Get("free")),
+		GreatOnly:   queryBool(q.Get("great")),
 		Sort:        q.Get("sort"),
 		Limit:       limit,
 		Offset:      offset,

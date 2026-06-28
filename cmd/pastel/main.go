@@ -442,6 +442,11 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 	if err := db.PruneDealsTable(30); err != nil {
 		slog.Warn("failed to prune old web deals", "error", err)
 	}
+	// Price history is kept longer than the deals table so "all-time low" stays
+	// meaningful across many fetch cycles.
+	if err := db.PrunePriceHistory(180); err != nil {
+		slog.Warn("failed to prune price history", "error", err)
+	}
 }
 
 func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv *currency.Converter, ws *watchlist.Store) {

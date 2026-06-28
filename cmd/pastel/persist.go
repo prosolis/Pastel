@@ -31,7 +31,7 @@ func saveCheapSharkDeals(db *database.DB, filtered []deals.CheapSharkDeal) {
 			IsHistLow:   database.Bool(d.IsHistLow),
 			IsFree:      database.Bool(d.SalePrice == 0),
 		}
-		if err := db.SaveDeal(deal); err != nil {
+		if err := db.SaveDealWithVerdict(deal); err != nil {
 			slog.Warn("failed to save cheapshark deal for web", "title", d.Title, "error", err)
 		}
 	}
@@ -60,7 +60,7 @@ func saveITADDeals(db *database.DB, filtered []deals.ITADDeal) {
 			IsFree:      database.Bool(d.Price == 0),
 			ExpiresAt:   d.Expiry,
 		}
-		if err := db.SaveDeal(deal); err != nil {
+		if err := db.SaveDealWithVerdict(deal); err != nil {
 			slog.Warn("failed to save itad deal for web", "title", d.Title, "error", err)
 		}
 	}
@@ -85,7 +85,7 @@ func saveWebDeals(db *database.DB, items []deals.WebDeal) {
 			URL:       d.URL,
 			IsFree:    database.Bool(d.IsFree),
 		}
-		if err := db.SaveDeal(deal); err != nil {
+		if err := db.SaveDealWithVerdict(deal); err != nil {
 			slog.Warn("failed to save web deal", "source", d.Source, "title", d.Title, "error", err)
 		}
 	}
@@ -108,7 +108,7 @@ func saveEpicFreeGames(db *database.DB, games []deals.EpicFreeGame) {
 			Upcoming:  database.Bool(g.Upcoming),
 			ExpiresAt: g.EndDate,
 		}
-		if err := db.SaveDeal(deal); err != nil {
+		if err := db.SaveDealWithVerdict(deal); err != nil {
 			slog.Warn("failed to save epic game for web", "title", g.Title, "error", err)
 		}
 	}

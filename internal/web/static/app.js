@@ -254,6 +254,7 @@ function currentParams() {
   if ($("max_price").value) p.set("max_price", $("max_price").value);
   if ($("hist_low").checked) p.set("hist_low", "1");
   if ($("free").checked) p.set("free", "1");
+  if ($("great").checked) p.set("great", "1");
   p.set("sort", $("sort").value);
   p.set("limit", PAGE_SIZE);
   p.set("offset", offset);
@@ -269,14 +270,25 @@ function cardHTML(d) {
   const badges = [];
   if (d.discount > 0) badges.push(`<span class="badge discount">-${d.discount}%</span>`);
   if (d.isFree) badges.push(`<span class="badge free">FREE</span>`);
+  // Trust verdict from Pastel's own price history. all-time-low and historical
+  // low are distinct signals (own-observed vs ITAD), so show both when present.
+  if (d.verdict === "all-time-low") badges.push(`<span class="badge verdict-atl">🔥 All-time low</span>`);
+  else if (d.verdict === "good") badges.push(`<span class="badge verdict-good">✓ Good price</span>`);
   if (d.isHistLow) badges.push(`<span class="badge low">★ historical low</span>`);
+  if (d.priceSuspect) badges.push(`<span class="badge suspect">⚠ Check price</span>`);
   if (d.upcoming) badges.push(`<span class="badge">upcoming</span>`);
+
+  // "Seen as low as" gives context only when we've actually observed it cheaper.
+  const seenLow =
+    !d.isFree && d.priceLow > 0 && d.priceLow < d.salePrice
+      ? `<div class="seen-low">Seen as low as ${money(d.priceLow)}</div>`
+      : "";
 
   const price = d.isFree
     ? `<div class="price">Free</div>`
     : `<div class="price">${money(d.salePrice)}${
         d.normalPrice > d.salePrice ? `<span class="normal">${money(d.normalPrice)}</span>` : ""
-      }</div>`;
+      }</div>${seenLow}`;
 
   // Deal URLs come from external sources; only emit a link for a benign
   // http(s) scheme so a javascript:/data: URL can't run as script (XSS).
@@ -595,7 +607,7 @@ function onFilterChange() {
 }
 
 function init() {
-  for (const id of ["q", "source", "store", "min_discount", "max_price", "hist_low", "free", "sort"]) {
+  for (const id of ["q", "source", "store", "min_discount", "max_price", "hist_low", "free", "great", "sort"]) {
     const el = $(id);
     el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", onFilterChange);
   }
