@@ -290,6 +290,18 @@ function cardHTML(d) {
         d.normalPrice > d.salePrice ? `<span class="normal">${money(d.normalPrice)}</span>` : ""
       }</div>${seenLow}`;
 
+  // Community signals (Phase 3): 🔥 reaction count from the Matrix room and how
+  // many members are watching this title. Both are omitted when zero so quiet
+  // deals don't carry empty chips.
+  const community = [];
+  if (d.reactions > 0)
+    community.push(`<span class="chip heat">🔥 ${d.reactions}</span>`);
+  if (d.watchers > 0)
+    community.push(`<span class="chip watching">👀 ${d.watchers} watching</span>`);
+  const communityHTML = community.length
+    ? `<div class="community">${community.join("")}</div>`
+    : "";
+
   // Deal URLs come from external sources; only emit a link for a benign
   // http(s) scheme so a javascript:/data: URL can't run as script (XSS).
   const href = safeURL(d.url);
@@ -301,6 +313,7 @@ function cardHTML(d) {
     <h3>${escapeHTML(d.title)}</h3>
     <div class="meta">${escapeHTML(d.store || d.source)}${d.rating ? ` · ★ ${d.rating}` : ""}</div>
     ${price}
+    ${communityHTML}
     <div class="card-actions">
       ${href ? `<a class="buy" href="${escapeAttr(href)}" target="_blank" rel="noopener">View deal</a>` : ""}
     </div>

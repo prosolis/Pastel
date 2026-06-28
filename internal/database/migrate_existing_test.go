@@ -42,6 +42,23 @@ func TestMigrateAddsCategoryToExistingDB(t *testing.T) {
 		t.Fatalf("existing row backfilled to %q, want games", cat)
 	}
 
+	// Phase 3 columns/tables reach the pre-existing deals table too: a reaction
+	// recorded against a backfilled deal must increment its reaction_count, which
+	// exercises event_id, reaction_count, and the deal_reactions table together.
+	if err := db.SetDealEventID("x", "$evt-x"); err != nil {
+		t.Fatalf("set event id after migrate: %v", err)
+	}
+	if isDeal, err := db.AddReaction("$evt-x", "@u:x", "$r-x"); err != nil || !isDeal {
+		t.Fatalf("add reaction after migrate: isDeal=%v err=%v", isDeal, err)
+	}
+	var reacts int
+	if err := db.RawDB().Get(&reacts, "SELECT reaction_count FROM deals WHERE dedup_id='x'"); err != nil {
+		t.Fatalf("reaction_count column missing after migrate: %v", err)
+	}
+	if reacts != 1 {
+		t.Fatalf("reaction_count = %d after one reaction, want 1", reacts)
+	}
+
 	// Idempotent: a second Open must not error.
 	db.Close()
 	db2, err := Open(path)

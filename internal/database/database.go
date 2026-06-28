@@ -161,11 +161,25 @@ func (d *DB) migrate() error {
 			upcoming         INTEGER DEFAULT 0,
 			expires_at       TIMESTAMP,
 			posted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			event_id         TEXT NOT NULL DEFAULT '',
+			reaction_count   INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE INDEX IF NOT EXISTS idx_deals_posted ON deals(posted_at);
 		CREATE INDEX IF NOT EXISTS idx_deals_source ON deals(source);
 		CREATE INDEX IF NOT EXISTS idx_deals_title_norm ON deals(title_normalized);
+
+		-- deal_reactions records each Matrix reaction to a posted deal message,
+		-- keyed by the reaction's own event ID so re-delivered sync events never
+		-- double-count. target_event_id joins to deals.event_id; reaction_count on
+		-- deals is the number of DISTINCT users who reacted (see refreshReactionCount).
+		CREATE TABLE IF NOT EXISTS deal_reactions (
+			reaction_event_id TEXT PRIMARY KEY,
+			target_event_id   TEXT NOT NULL,
+			user_id           TEXT NOT NULL,
+			reacted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_deal_reactions_target ON deal_reactions(target_event_id);
 
 		-- price_history records every (non-free) price Pastel has observed for a
 		-- product, keyed by a stable product key (see PriceKey). It is the basis
@@ -225,6 +239,18 @@ func (d *DB) migrate() error {
 		return err
 	}
 	if err := d.addColumnIfMissing("watchlist", "category", "category TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// Phase 3 (community): event_id links a deal row to the Matrix message it was
+	// posted as, so reactions to that event can be attributed; reaction_count is
+	// the number of distinct users who reacted (recomputed from deal_reactions).
+	if err := d.addColumnIfMissing("deals", "event_id", "event_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(`CREATE INDEX IF NOT EXISTS idx_deals_event ON deals(event_id)`); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("deals", "reaction_count", "reaction_count INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	return nil
@@ -323,9 +349,14 @@ type Deal struct {
 	ExpiresAt   *time.Time `db:"expires_at" json:"expiresAt,omitempty"`
 	PostedAt    time.Time  `db:"posted_at" json:"postedAt"`
 	// Phase 1 trust signals. Verdict is "" until Pastel has price history.
-	Verdict      string  `db:"verdict" json:"verdict,omitempty"`              // all-time-low | good | meh | ""
-	PriceLow     float64 `db:"price_low" json:"priceLow,omitempty"`          // lowest observed sale price
-	PriceSuspect Bool    `db:"price_suspect" json:"priceSuspect,omitempty"`  // likely inflated discount
+	Verdict      string  `db:"verdict" json:"verdict,omitempty"`            // all-time-low | good | meh | ""
+	PriceLow     float64 `db:"price_low" json:"priceLow,omitempty"`         // lowest observed sale price
+	PriceSuspect Bool    `db:"price_suspect" json:"priceSuspect,omitempty"` // likely inflated discount
+	// Phase 3 community signals. ReactionCount is the number of distinct Parodia
+	// members who reacted to the deal's Matrix message; WatcherCount is how many
+	// members have a watch whose normalized name equals this deal's (game deals).
+	ReactionCount int `db:"reaction_count" json:"reactions,omitempty"`
+	WatcherCount  int `db:"watcher_count" json:"watchers,omitempty"`
 }
 
 // PriceKey is the stable product identity used to accumulate price history.
@@ -431,6 +462,13 @@ func ClampDealLimit(limit int) int {
 	return limit
 }
 
+// dealColumns is the deals-table column list selected for a Deal, shared by
+// QueryDeals and TopDealsSince so the two SELECTs can't drift. watcher_count is
+// not a column — callers that need it append it to the SELECT.
+const dealColumns = "dedup_id, source, category, kind, title, title_normalized, store, " +
+	"sale_price, normal_price, discount, rating, url, is_hist_low, is_free, " +
+	"upcoming, expires_at, posted_at, verdict, price_low, price_suspect, reaction_count"
+
 // DealFilter describes the query the web interface wants to run against deals.
 type DealFilter struct {
 	Query       string
@@ -443,7 +481,7 @@ type DealFilter struct {
 	HistLowOnly bool
 	FreeOnly    bool
 	GreatOnly   bool   // only verdict all-time-low or good
-	Sort        string // newest | discount | price_asc | price_desc | rating | verdict
+	Sort        string // newest | discount | price_asc | price_desc | rating | verdict | hot
 	Limit       int
 	Offset      int
 }
@@ -512,9 +550,12 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 
 	order := orderClause(f.Sort)
 	limit := ClampDealLimit(f.Limit)
-	query := "SELECT dedup_id, source, category, kind, title, title_normalized, store, " +
-		"sale_price, normal_price, discount, rating, url, is_hist_low, is_free, " +
-		"upcoming, expires_at, posted_at, verdict, price_low, price_suspect FROM deals" + clause + order + " LIMIT ? OFFSET ?"
+	// watcher_count is a correlated count of watchlist entries whose normalized
+	// name equals this deal's — the "X members watching" community signal. It is
+	// cheap at page sizes (<=200) and lets the API stay a single round-trip.
+	query := "SELECT " + dealColumns + ", " +
+		"(SELECT COUNT(*) FROM watchlist w WHERE w.game_name_normalized = deals.title_normalized) AS watcher_count " +
+		"FROM deals" + clause + order + " LIMIT ? OFFSET ?"
 	args = append(args, limit, f.Offset)
 
 	var deals []Deal
@@ -622,6 +663,13 @@ func orderClause(sort string) string {
 		// Best deals first: all-time-low, then good, then everything else,
 		// newest within each bucket.
 		return " ORDER BY CASE verdict WHEN 'all-time-low' THEN 0 WHEN 'good' THEN 1 ELSE 2 END, posted_at DESC"
+	case "hot":
+		// Community heat: reaction count decayed by age in days, so a freshly
+		// loved deal outranks an old one with the same reactions. Deals with no
+		// reactions score 0 and fall to the bottom, newest-first among them.
+		// julianday() is core SQLite (no math-extension dependency); the integer
+		// reaction_count divided by a real denominator yields a real score.
+		return " ORDER BY reaction_count / (julianday('now') - julianday(posted_at) + 1) DESC, reaction_count DESC, posted_at DESC"
 	default: // newest
 		return " ORDER BY posted_at DESC"
 	}

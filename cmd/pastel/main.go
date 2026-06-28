@@ -149,6 +149,26 @@ func main() {
 		cmdHandler.HandleMessage(string(senderID), body)
 	})
 
+	// Community layer: count reactions members add to deal messages in the deals
+	// room, and drop them again when un-reacted. AddReaction ignores reactions to
+	// non-deal events, so it is safe to forward every in-room reaction.
+	mx.RegisterReactionHandler(func(sender id.UserID, roomID id.RoomID, targetEventID, reactionEventID string) {
+		if roomID != dealsRoomID {
+			return
+		}
+		if _, err := db.AddReaction(targetEventID, string(sender), reactionEventID); err != nil {
+			slog.Warn("failed to record reaction", "error", err)
+		}
+	})
+	mx.RegisterRedactionHandler(func(roomID id.RoomID, redactedEventID string) {
+		if roomID != dealsRoomID {
+			return
+		}
+		if err := db.RemoveReaction(redactedEventID); err != nil {
+			slog.Warn("failed to remove reaction", "error", err)
+		}
+	})
+
 	// Start sync loop after handlers are registered
 	mx.StartSync()
 
@@ -280,6 +300,21 @@ func main() {
 		}
 	}()
 
+	// Weekly heat digest — post the week's most-reacted deals to the room. The
+	// first tick is a week out, so a restart never re-posts the same digest.
+	go func() {
+		ticker := time.NewTicker(7 * 24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				postWeeklyHeatDigest(db, mx, conv, cfg.MatrixDealsRoomID)
+			}
+		}
+	}()
+
 	// Start the web interface if enabled. It shares the database and watchlist
 	// store, and shuts down when webCancel is called.
 	webCtx, webCancel := context.WithCancel(context.Background())
@@ -405,6 +440,26 @@ func flushWatchlistDigests(ws *watchlist.Store, mx *matrix.Client) {
 	}
 }
 
+// postWeeklyHeatDigest posts a "Top 5 this week" summary of the most-reacted
+// deals to the deals room. It is a no-op when nothing earned a reaction in the
+// window, so a quiet week stays quiet rather than posting an empty list.
+func postWeeklyHeatDigest(db *database.DB, mx *matrix.Client, conv *currency.Converter, roomID string) {
+	top, err := db.TopDealsSince(7, 5)
+	if err != nil {
+		slog.Error("weekly heat digest: query failed", "error", err)
+		return
+	}
+	if len(top) == 0 {
+		return
+	}
+	msg := formatter.FormatWeeklyHeatDigest(top, conv)
+	if err := mx.SendDeal(roomID, msg.Plain, msg.HTML); err != nil {
+		slog.Error("weekly heat digest: send failed", "error", err)
+		return
+	}
+	slog.Info("posted weekly heat digest", "count", len(top))
+}
+
 func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, conv *currency.Converter, ws *watchlist.Store) {
 	slog.Debug("checking cheapshark deals")
 	conv.EnsureRates()
@@ -463,9 +518,13 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 		}
 
 		msg := formatter.FormatCheapSharkDeal(d, conv)
-		if err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML); err != nil {
+		eventID, err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML)
+		if err != nil {
 			slog.Error("failed to send cheapshark deal", "title", d.Title, "error", err)
 			continue
+		}
+		if err := db.SetDealEventID(d.DedupID, eventID); err != nil {
+			slog.Warn("failed to map deal to event", "title", d.Title, "error", err)
 		}
 
 		if err := db.MarkPosted(d.DedupID, "cheapshark", d.Title); err != nil {
@@ -497,6 +556,10 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 	// meaningful across many fetch cycles.
 	if err := db.PrunePriceHistory(180); err != nil {
 		slog.Warn("failed to prune price history", "error", err)
+	}
+	// Drop reactions whose deal has aged out of the deals table.
+	if err := db.PruneReactions(); err != nil {
+		slog.Warn("failed to prune reactions", "error", err)
 	}
 }
 
@@ -547,9 +610,13 @@ func checkITADDeals(cfg *config.Config, db *database.DB, mx *matrix.Client, conv
 		}
 
 		msg := formatter.FormatITADDeal(d, conv)
-		if err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML); err != nil {
+		eventID, err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML)
+		if err != nil {
 			slog.Error("failed to send itad deal", "title", d.Title, "error", err)
 			continue
+		}
+		if err := db.SetDealEventID(d.DedupID, eventID); err != nil {
+			slog.Warn("failed to map deal to event", "title", d.Title, "error", err)
 		}
 
 		if err := db.MarkPosted(d.DedupID, "itad", d.Title); err != nil {
@@ -609,9 +676,13 @@ func checkEpicFreeGames(cfg *config.Config, db *database.DB, mx *matrix.Client, 
 		}
 
 		msg := formatter.FormatEpicFreeGame(g)
-		if err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML); err != nil {
+		eventID, err := mx.SendDealInThread(cfg.MatrixDealsRoomID, threadID, msg.Plain, msg.HTML)
+		if err != nil {
 			slog.Error("failed to send epic game", "title", g.Title, "error", err)
 			continue
+		}
+		if err := db.SetDealEventID(g.DedupID, eventID); err != nil {
+			slog.Warn("failed to map deal to event", "title", g.Title, "error", err)
 		}
 
 		if err := db.MarkPosted(g.DedupID, "epic", g.Title); err != nil {

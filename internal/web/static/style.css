@@ -347,6 +347,18 @@ body {
   color: #5c2e00;
 }
 .seen-low { font-size: 0.74rem; color: var(--accent-2-deep); opacity: 0.85; margin-top: 2px; }
+
+/* Community signals (Phase 3): heat + watcher chips under the price. */
+.community { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 2px 9px;
+  border-radius: 999px;
+  line-height: 1.5;
+}
+.chip.heat { background: linear-gradient(120deg, #ffd0a8, #ff7eb6); color: #5c1840; }
+.chip.watching { background: rgba(150, 130, 255, 0.16); color: var(--accent-2-deep); }
 @keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 @keyframes shine { 0% { background-position: 0 0; } 100% { background-position: 200% 0; } }
 

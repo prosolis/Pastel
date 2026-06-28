@@ -17,8 +17,9 @@ phases are tightened immediately before their build.
 |-------|-------|--------|
 | 1 | Price verdicts & trust badges | ✅ Done — 2026-06-28 (`4a9fc57`) |
 | 2 | Watchlist 2.0 | ✅ Done — 2026-06-28 (`49b6daf`) |
-| 3 | Community layer | ⬜ Next — Matrix reaction infra (highest risk) |
-| 4 | Coverage & reach | ⬜ Planned |
+| 3 | Community layer | ✅ Done — 2026-06-28 |
+| 4 | Deal images | ⬜ Next — per-source image extraction + card thumbnails |
+| 5 | Coverage & reach | ⬜ Planned |
 
 Branch: `feat/price-verdicts`.
 
@@ -127,28 +128,80 @@ do this on next deploy.
 
 ---
 
-## Phase 3 — Community layer  ⬜ *(tighten before build — largest surface)*
+## Phase 3 — Community layer  ✅
 
-**Goal:** Parodia-only signal no public aggregator can copy. Requires new Matrix
+**Goal:** Parodia-only signal no public aggregator can copy. Required new Matrix
 plumbing.
 
-- **Deal → event_id mapping (prerequisite, does not exist today).** When posting
-  via `SendDealInThread`, capture the returned event ID and store it (add
-  `event_id TEXT` to `deals`, or a `deal_events` table). This is the join key for
-  reactions.
-- **Reaction ingestion.** Register an `event.EventReaction` handler alongside the
-  message handler. On an `m.reaction` whose `m.relates_to` target is a known deal
-  event, increment a `reaction_count` (optionally per-user to dedup).
-- **Community ranking + Heat tab.** Add `reaction_count INTEGER`; new `hot` sort
-  (recency-decayed reaction score). Frontend `🔥 Heat` tab (data-driven nav
-  already supports new tabs) and an "X members watching" line on game deals
-  (count from `watchlist` by normalized name).
-- **Weekly room digest.** Reuse the ticker pattern to post a "Top 5 this week"
-  message to the deals room.
-- **Verify:** post a test deal, react from a second account, confirm the count
-  increments and the Heat tab reorders.
+### Built (2026-06-28)
 
-## Phase 4 — Coverage & reach  ⬜ *(tighten before build)*
+- **Deal → event_id mapping (the prerequisite that didn't exist).**
+  `SendDealInThread` now returns the posted message's event ID; all three posting
+  sites (cheapshark/itad/epic in `main.go`) call `db.SetDealEventID(dedupID,
+  eventID)` after posting. Stored as additive `deals.event_id TEXT` (indexed).
+  `SaveDeal`'s upsert never touches `event_id`, so the mapping survives price
+  refreshes.
+- **Reaction ingestion.** `RegisterReactionHandler` (`event.EventReaction`) +
+  `RegisterRedactionHandler` (`event.EventRedaction`, for un-react) in
+  `internal/matrix/client.go`, wired in `main.go` scoped to the deals room.
+  Storage in `internal/database/reactions.go`: `deal_reactions(reaction_event_id
+  PK, target_event_id, user_id)`; `AddReaction`/`RemoveReaction` recompute
+  `deals.reaction_count` as `COUNT(DISTINCT user_id)`. Idempotent by reaction
+  event ID, so a restart replaying recent timeline never double-counts; reactions
+  to non-deal events are ignored. Reactions are intentionally **not** start-time
+  filtered (members react to old deals) — dedup makes that safe.
+- **Community ranking + Heat.** `reaction_count` column + `hot` sort
+  (`reaction_count / (age_in_days + 1)`, using core `julianday()` — no math
+  extension). Surfaced as a **🔥 Heat (most loved)** option in the sort dropdown
+  (cleaner than a pseudo-category pill in the data-driven catnav) plus a `🔥 N`
+  chip on cards. "X members watching" comes from a `watcher_count` correlated
+  subquery (`watchlist` rows whose normalized name == the deal's) rendered as a
+  `👀 N watching` chip.
+- **Weekly room digest.** `postWeeklyHeatDigest` (`TopDealsSince(7, 5)` +
+  `FormatWeeklyHeatDigest`) posts "🔥 Hottest deals this week" on a 7-day ticker;
+  no-op on a quiet week. First tick is a week out, so a restart never re-posts.
+- **Pruning.** `PruneReactions` drops reactions whose deal aged out, alongside the
+  existing pruners.
+- **Tests:** `reactions_test.go` (distinct-user counting, replay idempotency,
+  multi-emoji, redaction, `TopDealsSince` + `hot` ordering); Phase-3 columns added
+  to the existing-DB migration guard.
+
+**Not done in-session:** live Matrix smoke test (post a deal, react from a second
+account, confirm the count increments and Heat reorders) — needs the running bot;
+do on next deploy, same as the Phase 2 DM smoke test.
+
+## Phase 4 — Deal images  ⬜ *(tighten before build — next up)*
+
+**Goal:** Give the gallery actual item imagery. Today every source struct lacks
+an image, so cards are text-only and read bland. This is self-contained and
+high-impact — the whole phase is "thread an image URL from each source to the
+card, degrade gracefully where there isn't one."
+
+- **Per-source extraction (the bulk of the work).** No source carries an image
+  field yet; add one to each and populate it:
+  - **CheapShark** — already returns a `thumb` field in the raw JSON; just parse
+    and map it (cheapest win, do first).
+  - **RSS (DealNews, Slickdeals)** — pull `media:content` / `media:thumbnail` /
+    `enclosure[@type^="image"]`, falling back to the first `<img src>` in
+    `description`/`content:encoded`. Extend `rssItem` with the media elements
+    (matched by local name like the existing namespaced fields).
+  - **Epic** — `keyImages` in the GraphQL response (prefer `OfferImageWide` /
+    `Thumbnail`).
+  - **ITAD** — best-effort asset/banner if the API exposes one; otherwise leave
+    blank (the fallback covers it).
+- **Schema + plumbing.** Additive `deals.image_url TEXT` column (idempotent
+  `addColumnIfMissing`); add `ImageURL` to the source structs, the `database.Deal`
+  struct (+ `dealColumns`/SELECT), and every `save*Deals` mapper in `persist.go`.
+- **Frontend.** A lazy-loaded (`loading="lazy"`) thumbnail at the top of the card,
+  run through the existing `safeURL()` guard (only http(s)); on missing/failed
+  load (`onerror`) fall back to the Pastel mascot art so the grid never shows
+  broken-image icons. Keep the pastel aesthetic — rounded top corners, object-fit
+  cover, fixed aspect ratio so cards stay uniform.
+- **Verify:** load the gallery and confirm thumbnails render per source, the
+  fallback shows for an image-less deal, and no mixed-content/XSS via a hostile
+  URL (the `safeURL` guard already covers the link; reuse it for `src`).
+
+## Phase 5 — Coverage & reach  ⬜ *(tighten before build)*
 
 **Goal:** More of what Parodia actually buys, plus app-like delivery.
 
@@ -170,7 +223,8 @@ plumbing.
 
 1. ✅ Phase 1 — implemented, tested, committed.
 2. ✅ Phase 2 — implemented, tested, committed.
-3. Phase 3 — tighten (Matrix reaction infra is the risk) → build → verify → commit.
-4. Phase 4 — sources incrementally; PWA as its own sub-phase.
+3. ✅ Phase 3 — implemented & tested; live Matrix smoke test on next deploy.
+4. Phase 4 (images) — CheapShark thumb first, then RSS/Epic/ITAD, then card UI.
+5. Phase 5 — sources incrementally; PWA as its own sub-phase.
 
 Each phase is independently shippable and leaves the service working.
