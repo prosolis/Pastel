@@ -488,9 +488,18 @@ func ClampDealLimit(limit int) int {
 // dealColumns is the deals-table column list selected for a Deal, shared by
 // QueryDeals and TopDealsSince so the two SELECTs can't drift. watcher_count is
 // not a column — callers that need it append it to the SELECT.
-const dealColumns = "dedup_id, source, category, kind, title, title_normalized, store, " +
-	"sale_price, normal_price, discount, rating, url, image_url, is_hist_low, is_free, " +
-	"upcoming, expires_at, posted_at, verdict, price_low, price_suspect, reaction_count"
+// Several deals columns are nullable but map to non-pointer Go scalars on Deal,
+// so a NULL fails the scan with "converting NULL to <type> is unsupported".
+// This bit prod: non-games RSS rows and deals without observed price history
+// leave price_low (and potentially store/url/sale_price/etc.) NULL. Coalesce
+// every such column to its zero value so any category's rows scan cleanly;
+// json:omitempty then keeps the zeroed numeric fields out of the payload.
+const dealColumns = "dedup_id, source, category, kind, title, title_normalized, " +
+	"COALESCE(store, '') AS store, COALESCE(sale_price, 0) AS sale_price, " +
+	"COALESCE(normal_price, 0) AS normal_price, COALESCE(discount, 0) AS discount, " +
+	"COALESCE(rating, 0) AS rating, COALESCE(url, '') AS url, image_url, is_hist_low, " +
+	"is_free, upcoming, expires_at, posted_at, verdict, " +
+	"COALESCE(price_low, 0) AS price_low, price_suspect, reaction_count"
 
 // DealFilter describes the query the web interface wants to run against deals.
 type DealFilter struct {
@@ -575,14 +584,21 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	limit := ClampDealLimit(f.Limit)
 	// watcher_count is a correlated count of watchlist entries whose normalized
 	// name equals this deal's — the "X members watching" community signal. It is
-	// cheap at page sizes (<=200) and lets the API stay a single round-trip.
+	// cheap at page sizes (<=200) and lets the API stay a single round-trip. Only
+	// active (unexpired) watches count, matching who FindMatchingUsers would
+	// actually notify, so the displayed number doesn't include stale watches.
+	now := time.Now().UTC().Format(time.RFC3339)
 	query := "SELECT " + dealColumns + ", " +
-		"(SELECT COUNT(*) FROM watchlist w WHERE w.game_name_normalized = deals.title_normalized) AS watcher_count " +
+		"(SELECT COUNT(*) FROM watchlist w WHERE w.game_name_normalized = deals.title_normalized AND w.expires_at > ?) AS watcher_count " +
 		"FROM deals" + clause + order + " LIMIT ? OFFSET ?"
-	args = append(args, limit, f.Offset)
+	// The watcher_count subquery is in the SELECT list, so its placeholder comes
+	// before the WHERE-clause args; prepend now to a fresh slice (args is reused
+	// by the COUNT query above and must stay unchanged).
+	selArgs := append([]any{now}, args...)
+	selArgs = append(selArgs, limit, f.Offset)
 
 	var deals []Deal
-	if err := d.db.Select(&deals, query, args...); err != nil {
+	if err := d.db.Select(&deals, query, selArgs...); err != nil {
 		return nil, 0, err
 	}
 	return deals, total, nil

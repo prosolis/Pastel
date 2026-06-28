@@ -88,6 +88,23 @@ func (s *Store) TakeDigest(userID string) ([]DigestItem, error) {
 	return items, nil
 }
 
+// RestoreDigest re-queues items previously removed by TakeDigest, used to
+// recover a digest whose DM failed to send so the matches aren't lost — they
+// simply wait for the next flush. Order is reset to "now", which is acceptable
+// for a once-a-day summary.
+func (s *Store) RestoreDigest(userID string, items []DigestItem) error {
+	for _, it := range items {
+		if _, err := s.db.Exec(
+			`INSERT INTO pending_digest (user_id, label, title, url, price, discount, is_free)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			userID, it.Label, it.Title, it.URL, it.Price, it.Discount, it.IsFree,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // PruneDigest drops digest items older than the given age, a safety valve so a
 // user who never receives a flush (e.g. left the room) doesn't accumulate rows
 // forever. Mirrors the other pruning paths.

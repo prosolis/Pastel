@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -8,6 +9,16 @@ import (
 
 	"github.com/prosolis/Pastel/internal/database"
 )
+
+// validPushKey reports whether a base64url (unpadded) key decodes to exactly
+// wantLen bytes — the sizes RFC 8291 requires (a 65-byte uncompressed P-256
+// point for p256dh, a 16-byte auth secret). The webpush sender decodes with the
+// same alphabet, so a key that fails here could never be delivered to anyway;
+// rejecting it up front keeps undeliverable rows out of the DB.
+func validPushKey(s string, wantLen int) bool {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	return err == nil && len(b) == wantLen
+}
 
 // pushSubBody is the wire shape of a browser PushSubscription.toJSON(): the push
 // service endpoint plus the client's encryption keys.
@@ -41,9 +52,10 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request, ses
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	// Endpoints are https URLs; the keys are base64url. Reject anything obviously
-	// malformed before it reaches the DB / push path.
-	if !strings.HasPrefix(body.Endpoint, "https://") || body.Keys.P256dh == "" || body.Keys.Auth == "" {
+	// Endpoints are https URLs; the keys are base64url of fixed length. Reject
+	// anything malformed before it reaches the DB / push path, so a bad row can't
+	// linger and fail (un-prunably) on every future send.
+	if !strings.HasPrefix(body.Endpoint, "https://") || !validPushKey(body.Keys.P256dh, 65) || !validPushKey(body.Keys.Auth, 16) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid subscription"})
 		return
 	}

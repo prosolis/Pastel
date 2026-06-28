@@ -75,15 +75,7 @@ func dealNewsItem(item rssItem, category string) (WebDeal, bool) {
 	desc := stripTags(item.Description)
 
 	// Price/discount can appear in either the title or the description body.
-	price, hasPrice := parsePrice(title)
-	if !hasPrice {
-		price, hasPrice = parsePrice(desc)
-	}
-	discount := parseDiscount(title)
-	if discount == 0 {
-		discount = parseDiscount(desc)
-	}
-	isFree := (hasPrice && price == 0) || (!hasPrice && mentionsFree(title)) || discount == 100
+	price, _, discount, isFree := parseDealText(title, desc)
 
 	store := dealNewsStore(item.Description, title)
 

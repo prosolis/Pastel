@@ -69,22 +69,27 @@ func (wp *webPush) notify(userID, title, body, url string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	for _, s := range subs {
+		// One timeout per send so a single slow endpoint can't starve the rest of
+		// a user's subscriptions of their delivery budget.
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		status, err := wp.sender.Send(ctx, webpush.Subscription{
 			Endpoint: s.Endpoint,
 			P256dh:   s.P256dh,
 			Auth:     s.Auth,
 		}, payload)
-		if err != nil {
+		cancel()
+		switch {
+		case err != nil:
 			slog.Warn("push: send failed", "user", userID, "error", err)
-			continue
-		}
-		if webpush.Gone(status) {
+		case webpush.Gone(status):
 			if err := wp.db.DeletePushSubByEndpoint(s.Endpoint); err != nil {
 				slog.Warn("push: prune dead subscription failed", "error", err)
 			}
+		case status < 200 || status >= 300:
+			// 4xx/5xx that aren't Gone (e.g. 401 bad VAPID, 413 too large, 429
+			// rate-limit, 5xx) would otherwise be silently treated as delivered.
+			slog.Warn("push: unexpected status", "user", userID, "status", status, "endpoint", s.Endpoint)
 		}
 	}
 }

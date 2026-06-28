@@ -82,3 +82,31 @@ func TestSaveAndQueryDeals(t *testing.T) {
 		t.Fatalf("facets: categories=%v sources=%v stores=%v err=%v", categories, sources, stores, err)
 	}
 }
+
+// TestQueryDealsToleratesNullReals guards against the prod regression where
+// rows from non-games sources (RSS) leave the nullable REAL columns NULL,
+// causing "converting NULL to float64 is unsupported" during scan. The columns
+// are coalesced to 0 in dealColumns, so QueryDeals must succeed and zero them.
+func TestQueryDealsToleratesNullReals(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	// Insert a deal the way an RSS source would: no price history and no
+	// numeric price/rating, leaving those nullable REAL columns NULL.
+	db.db.MustExec(`INSERT INTO deals (dedup_id, source, category, kind, title, title_normalized, store)
+		VALUES ('rss-1', 'dealnews', 'tech', 'deal', 'USB Cable', 'usb cable', 'Amazon')`)
+
+	deals, total, err := db.QueryDeals(DealFilter{Categories: []string{"tech"}})
+	if err != nil {
+		t.Fatalf("query with NULL reals failed: %v", err)
+	}
+	if total != 1 || len(deals) != 1 {
+		t.Fatalf("expected 1 deal, got total=%d len=%d", total, len(deals))
+	}
+	if d := deals[0]; d.SalePrice != 0 || d.NormalPrice != 0 || d.Rating != 0 || d.PriceLow != 0 {
+		t.Errorf("NULL reals should coalesce to 0, got %+v", d)
+	}
+}

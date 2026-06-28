@@ -184,7 +184,10 @@ func (s *Store) FindMatchingUsers(d MatchDeal) ([]Match, error) {
 		if e.MaxPrice > 0 && !d.IsFree && (d.PriceUSD <= 0 || d.PriceUSD > e.MaxPrice) {
 			continue
 		}
-		if e.MinDiscount > 0 && d.Discount < e.MinDiscount {
+		// A free deal is effectively 100% off, so it satisfies any min_discount
+		// even when the source left Discount unparsed (0) — mirroring the max_price
+		// exemption above.
+		if e.MinDiscount > 0 && !d.IsFree && d.Discount < e.MinDiscount {
 			continue
 		}
 		matches = append(matches, Match{

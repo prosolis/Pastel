@@ -280,3 +280,57 @@ unit-validated; interop is the deploy check.
    verified locally, live push delivery deferred to deploy.
 
 Each phase is independently shippable and leaves the service working.
+
+---
+
+## Known issues / follow-ups
+
+Surfaced by the `feat/price-verdicts` code review. The correctness/observability
+bugs found alongside these were fixed in that branch; the items below were left
+open because they need a design decision or are best-effort by nature.
+
+### 1. Price verdict badge is near-universal (`internal/database/verdict.go`)
+
+`SaveDealWithVerdict` records the current price into `price_history` *after*
+computing the verdict against prior history. So on a deal's **second** fetch
+cycle at an unchanged price, `LowestPrice` already returns that same price and
+`salePrice <= low*atlSlack` is true → it earns `all-time-low`. Since
+CheapShark/ITAD re-save every still-live deal every couple of hours, virtually
+any deal that survives one cycle at a stable price shows the 🔥 badge, which
+guts the trust signal. The doc comment claims only "a genuine new low" reads as
+ATL, but the code also fires on equal-to-prior.
+
+**Compounded by** `PriceKey(category, titleNorm)` having no per-product id: two
+unrelated RSS items whose titles normalize the same (e.g. "usb cable") share one
+history key, so one can inherit the other's "all-time low" / median.
+
+**Fix direction (needs a decision):** require the current price to be a genuine
+new low (strictly below prior), and/or a minimum number of *distinct* prior
+observations before making any claim; for RSS, fold a stabler identifier (store +
+title, or the outbound product URL) into the price key. Not auto-fixed because it
+changes the badge's intended semantics.
+
+### 2. Best-effort price parsing (`internal/deals/rss.go` — `parsePrice`)
+
+`parsePrice` returns the **first** currency token in the text, so marketing copy
+like "$5 off $50 orders" is read as a $5 product price (and feeds that into
+`price_history`). It also strips all commas before `ParseFloat`, so a euro
+decimal `€49,99` is mis-scaled to `4999`. These are deliberately best-effort —
+RSS has no structured price field — and tightening the heuristic risks
+regressing the common US-dollar case, so it was left as-is. Revisit if/when a
+non-USD feed is added or price-history corruption is observed in prod.
+
+### 3. Efficiency (noted, not changed)
+
+Low-urgency because they sit on background/ticker paths, not request hot paths:
+
+- **DealNews fetches its ~13 vertical feeds sequentially** (`dealnews.go`). Worst
+  case a scan blocks for `13 × (timeout + retries)`. Could fan out with bounded
+  concurrency and merge.
+- **VAPID JWT re-signed on every `Send`** (`webpush.go`). The JWT is valid 12h and
+  varies only by audience (endpoint origin); a user with several device
+  subscriptions on the same push service re-signs an identical token each time.
+  Could memoize per audience with its expiry.
+- **`watcher_count` correlated subquery runs per result row** in `QueryDeals`
+  (up to 200 scans of `watchlist` per page). An index on
+  `watchlist.game_name_normalized` or a single `GROUP BY` join would remove it.

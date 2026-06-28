@@ -106,8 +106,14 @@ func TestDealNewsItemParsing(t *testing.T) {
 	if d.Category != "tech" {
 		t.Errorf("category: want tech, got %q", d.Category)
 	}
-	if d.Discount != 49 {
-		t.Errorf("discount: want 49, got %d", d.Discount)
+	// "Up to 49% off" is a marketing ceiling across the page, not this deal's
+	// actual discount, so it must NOT be read as a 49% discount.
+	if d.Discount != 0 {
+		t.Errorf("discount: want 0 (up-to ceiling ignored), got %d", d.Discount)
+	}
+	// "free shipping" is a perk, not a free product, so the item isn't free.
+	if d.IsFree {
+		t.Error("isFree: want false for a 'free shipping' perk")
 	}
 	if d.DedupID != "dealnews-21844660" {
 		t.Errorf("dedupID: want dealnews-21844660, got %q", d.DedupID)

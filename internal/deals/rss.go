@@ -6,7 +6,6 @@ import (
 	"html"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -50,10 +49,10 @@ type rssItem struct {
 	// Image carriers, matched by local name (namespace ignored): <media:content>
 	// and <media:thumbnail> (Media RSS), <enclosure> (RSS core), and
 	// <content:encoded> (the full HTML body, scanned for an <img> as a last resort).
-	MediaContent   []rssMedia    `xml:"content"`
-	MediaThumbnail []rssMedia    `xml:"thumbnail"`
+	MediaContent   []rssMedia     `xml:"content"`
+	MediaThumbnail []rssMedia     `xml:"thumbnail"`
 	Enclosures     []rssEnclosure `xml:"enclosure"`
-	ContentEncoded string        `xml:"encoded"`
+	ContentEncoded string         `xml:"encoded"`
 }
 
 // rssMedia models a <media:content>/<media:thumbnail> element; only the url and
@@ -84,6 +83,9 @@ var (
 	rePrice = regexp.MustCompile(`[$£€]\s?([0-9][0-9.,]*)`)
 	// "50% off" / "50 % off" — the discount percentage.
 	reDiscount = regexp.MustCompile(`(?i)([0-9]{1,3})\s?%\s*off`)
+	// "up to 50% off" — a marketing ceiling across many items, not this deal's
+	// actual discount, so parseDiscount ignores a percentage introduced this way.
+	reUpToDiscount = regexp.MustCompile(`(?i)up\s+to\s+[0-9]{1,3}\s?%`)
 	// Whole-word "free" (so "freedom" doesn't match).
 	reFree = regexp.MustCompile(`(?i)\bfree\b`)
 	// "free shipping" / "free returns" / "free trial" etc. — a free *perk*, not a
@@ -100,9 +102,11 @@ var (
 // Returns "" when no http(s) image can be found, leaving the card image-less.
 func imageFromItem(item rssItem) string {
 	// 1. <media:content> / <media:thumbnail> with an image (or unspecified) type.
-	for _, m := range append(append([]rssMedia{}, item.MediaContent...), item.MediaThumbnail...) {
-		if isImageURL(m.URL, m.Type, m.Medium) {
-			return m.URL
+	for _, group := range [][]rssMedia{item.MediaContent, item.MediaThumbnail} {
+		for _, m := range group {
+			if isImageURL(m.URL, m.Type, m.Medium) {
+				return m.URL
+			}
 		}
 	}
 	// 2. An <enclosure> declared as an image.
@@ -197,17 +201,24 @@ func stripTags(s string) string {
 	return strings.Join(strings.Fields(reTags.ReplaceAllString(s, " ")), " ")
 }
 
-// storeFromURL returns the retailer host without a leading "www." (e.g.
-// "https://www.guitarcenter.com/x" -> "guitarcenter.com"). Empty on parse error.
-func storeFromURL(raw string) string {
-	if raw == "" {
-		return ""
+// parseDealText extracts the price, discount, and free-ness from an RSS item's
+// title and description using the best-effort heuristics shared by every RSS
+// source. Price and discount are read from the title first, then the body.
+func parseDealText(title, desc string) (price float64, hasPrice bool, discount int, isFree bool) {
+	price, hasPrice = parsePrice(title)
+	if !hasPrice {
+		price, hasPrice = parsePrice(desc)
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return ""
+	discount = parseDiscount(title)
+	if discount == 0 {
+		discount = parseDiscount(desc)
 	}
-	return strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+	// A parsed $0, or a genuine "free" mention, makes the product itself free.
+	// A 100% discount is deliberately NOT treated as free: aggregator headlines
+	// say "up to 100% off" as marketing copy (already zeroed by parseDiscount's
+	// up-to guard), which would otherwise flag whole feeds as giveaways.
+	isFree = (hasPrice && price == 0) || (!hasPrice && mentionsFree(title))
+	return price, hasPrice, discount, isFree
 }
 
 // parsePrice pulls the first currency amount out of some text. The bool reports
@@ -234,7 +245,12 @@ func mentionsFree(text string) bool {
 }
 
 // parseDiscount pulls a "NN% off" percentage out of some text, clamped to 100.
+// "Up to NN% off" marketing copy is ignored — it is a ceiling across a feed, not
+// this deal's real discount.
 func parseDiscount(text string) int {
+	if reUpToDiscount.MatchString(text) {
+		return 0
+	}
 	m := reDiscount.FindStringSubmatch(text)
 	if m == nil {
 		return 0
@@ -252,10 +268,10 @@ func parseDiscount(text string) int {
 // rssTimeLayouts covers the pubDate spellings aggregators emit: 4-digit year
 // (DealNews) and 2-digit year (Slickdeals), with numeric or named zones.
 var rssTimeLayouts = []string{
-	time.RFC1123Z,                    // Mon, 02 Jan 2006 15:04:05 -0700
-	time.RFC1123,                     // Mon, 02 Jan 2006 15:04:05 MST
-	"Mon, 02 Jan 06 15:04:05 -0700",  // 2-digit year, numeric zone
-	"Mon, 02 Jan 06 15:04:05 MST",    // 2-digit year, named zone
+	time.RFC1123Z,                   // Mon, 02 Jan 2006 15:04:05 -0700
+	time.RFC1123,                    // Mon, 02 Jan 2006 15:04:05 MST
+	"Mon, 02 Jan 06 15:04:05 -0700", // 2-digit year, numeric zone
+	"Mon, 02 Jan 06 15:04:05 MST",   // 2-digit year, named zone
 }
 
 // parseRSSTime parses an RSS pubDate, falling back to now if none of the known

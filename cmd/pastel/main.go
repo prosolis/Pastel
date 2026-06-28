@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -193,6 +195,14 @@ func main() {
 	// Start presence heartbeat
 	mx.StartPresenceHeartbeat()
 
+	// Web Push: load/generate the VAPID identity once, before any deal-check
+	// goroutine starts. pushOut is read (without locking) by notifyWatchlist on
+	// every match, including from the background checkWebDeals goroutine and the
+	// ticker goroutines below, so it must be fully assigned before they launch.
+	if cfg.WebEnabled {
+		pushOut = setupPush(db, cfg.VAPIDSubject)
+	}
+
 	// Run initial checks
 	slog.Info("running initial deal checks")
 	if cfg.HasSource("cheapshark") {
@@ -211,6 +221,9 @@ func main() {
 
 	// Run initial expiry check
 	checkWatchlistExpiry(watchStore, mx)
+
+	// Initial source-independent prune (price history, stale reactions).
+	pruneMaintenance(db)
 
 	// Start ticker goroutines
 	stop := make(chan struct{})
@@ -287,6 +300,22 @@ func main() {
 		}
 	}()
 
+	// Daily DB maintenance — prune the tables no single source owns, so they stay
+	// bounded even when the cheapshark source (whose check used to host these
+	// prunes) is disabled.
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				pruneMaintenance(db)
+			}
+		}
+	}()
+
 	// Daily-digest flush — DM queued matches once a day to users in digest mode.
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
@@ -321,9 +350,8 @@ func main() {
 	webCtx, webCancel := context.WithCancel(context.Background())
 	webDone := make(chan struct{})
 	if cfg.WebEnabled {
-		// Web Push: load/generate the VAPID identity once. pushOut (consulted by
-		// notifyWatchlist) and the web server share the same sender.
-		pushOut = setupPush(db, cfg.VAPIDSubject)
+		// pushOut was established above (before the goroutines) and shares its
+		// sender with the web server.
 		var pushSender *webpush.Sender
 		if pushOut != nil {
 			pushSender = pushOut.sender
@@ -453,7 +481,12 @@ func flushWatchlistDigests(ws *watchlist.Store, mx *matrix.Client) {
 			continue
 		}
 		if err := mx.SendDM(id.UserID(uid), formatter.FormatWatchlistDigest(items)); err != nil {
-			slog.Error("digest: send failed", "user", uid, "error", err)
+			// TakeDigest already deleted the rows, so re-queue them rather than lose
+			// a day's matches to a transient DM failure; the next flush retries.
+			slog.Error("digest: send failed, re-queuing", "user", uid, "error", err)
+			if rerr := ws.RestoreDigest(uid, items); rerr != nil {
+				slog.Error("digest: re-queue failed, matches lost", "user", uid, "error", rerr)
+			}
 		}
 	}
 	if err := ws.PruneDigest(7 * 24 * time.Hour); err != nil {
@@ -573,12 +606,18 @@ func checkCheapShark(cfg *config.Config, db *database.DB, mx *matrix.Client, con
 	if err := db.PruneDealsTable(30); err != nil {
 		slog.Warn("failed to prune old web deals", "error", err)
 	}
-	// Price history is kept longer than the deals table so "all-time low" stays
-	// meaningful across many fetch cycles.
+}
+
+// pruneMaintenance prunes the tables that aren't owned by a single source, so
+// they stay bounded regardless of which sources are enabled. Price history is
+// kept longer than the deals table (~180d) so "all-time low" stays meaningful;
+// reactions are dropped once their deal has aged out. This ran inside
+// checkCheapShark before, which silently leaked both tables whenever the
+// cheapshark source was disabled.
+func pruneMaintenance(db *database.DB) {
 	if err := db.PrunePriceHistory(180); err != nil {
 		slog.Warn("failed to prune price history", "error", err)
 	}
-	// Drop reactions whose deal has aged out of the deals table.
 	if err := db.PruneReactions(); err != nil {
 		slog.Warn("failed to prune reactions", "error", err)
 	}
@@ -772,8 +811,15 @@ const webDealsSeededKey = "web_deals_seeded"
 // posted_deals is used purely as a once-per-deal notification ledger: a deal is
 // notified only the first time its dedup_id is seen.
 func notifyWebDealWatchers(db *database.DB, mx *matrix.Client, conv *currency.Converter, ws *watchlist.Store, items []deals.WebDeal) {
-	// On the very first scan, record current deals without notifying.
-	seeded, _ := db.GetConfig(webDealsSeededKey)
+	// On the very first scan, record current deals without notifying. A missing
+	// key (ErrNoRows) is the genuine first-run signal; any other read error must
+	// NOT be mistaken for it, or a transient failure on an already-seeded DB would
+	// re-enter the seed branch and silently swallow this batch of new matches.
+	seeded, err := db.GetConfig(webDealsSeededKey)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		slog.Warn("web deal seed-state read failed; skipping notify to avoid mass-seeding", "error", err)
+		return
+	}
 	firstScan := seeded == ""
 
 	for _, d := range items {
