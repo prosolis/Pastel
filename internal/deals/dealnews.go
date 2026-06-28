@@ -4,31 +4,44 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
+
+// dealNewsConcurrency bounds how many vertical feeds are fetched at once. The
+// feeds are independent, so fanning out collapses the worst-case scan time from
+// the sum of every feed's timeout/retries down to roughly one feed's — while the
+// cap keeps Pastel from opening a dozen simultaneous connections to one host.
+const dealNewsConcurrency = 5
 
 // dealNewsFeeds maps DealNews browse categories (served as RSS at
 // dealnews.com/c<NN>/<Name>/?rss=1) onto Pastel's category dimension. Each feed
 // is a vertical, and the category travels with every deal scraped from it.
+//
+// IMPORTANT: DealNews resolves a feed solely by its numeric c<NN> id and ignores
+// the human-readable name in the path — request a wrong number and it silently
+// 301s to whatever category that id really is (e.g. c1136 is *Generators*, not
+// pets). The name segment below is therefore only documentation; the id is the
+// contract. Every id here is verified to resolve to the named top-level category
+// (don't reuse the wrong-numbers history: c238 is Automotive, NOT tools).
 var dealNewsFeeds = []struct {
 	path     string // the c<NN>/<Name> path segment
 	category string
 }{
 	{"c142/Electronics", "tech"},
-	{"c108/Computers", "tech"},
+	{"c39/Computers", "tech"},
 	{"c202/Clothing-Accessories", "clothing"},
 	{"c186/Gaming-Toys", "games"},
-	{"c1009/Home-Garden", "home"},
+	{"c196/Home-Garden", "home"},
 	{"c211/Sports-Fitness", "sports"},
 	{"c178/Movies-Music-Books", "media"},
 	// Phase 5 coverage expansion — each is a distinct DealNews vertical (Slickdeals
 	// RSS, by contrast, ignores its category params and only serves the frontpage,
-	// so DealNews is the reliable way to add real verticals).
-	{"c238/Tools-Hardware", "tools"},
-	{"c196/Health-Beauty", "beauty"},
-	{"c184/Automotive", "auto"},
-	{"c181/Babies-Kids", "kids"},
-	{"c219/Office-School-Supplies", "office"},
-	{"c1136/Pet-Supplies", "pets"},
+	// so DealNews is the reliable way to add real verticals). DealNews has no pet
+	// or baby/kids category at all, so those verticals are not sourced here.
+	{"c197/Home-Garden/Tools-Hardware", "tools"},
+	{"c756/Health-Beauty", "beauty"},
+	{"c238/Automotive", "auto"},
+	{"c182/Office-School-Supplies", "office"},
 }
 
 // DealNews descriptions carry a "Shop Now at <Store></p>" call to action, which
@@ -42,23 +55,52 @@ var reDealNewsStore = regexp.MustCompile(`(?i)(?:shop|buy|order|get it) now at\s
 // the posts as normalized deals tagged with the feed's category. A failure on
 // one feed is tolerated as long as at least one succeeds.
 func FetchDealNewsDeals() ([]WebDeal, error) {
+	type result struct {
+		deals []WebDeal
+		err   error
+	}
+	results := make([]result, len(dealNewsFeeds))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, dealNewsConcurrency)
+	for i, feed := range dealNewsFeeds {
+		wg.Add(1)
+		go func(i int, feed struct {
+			path     string
+			category string
+		}) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			reqURL := fmt.Sprintf("https://www.dealnews.com/%s/?rss=1", feed.path)
+			rss, err := fetchRSS(reqURL)
+			if err != nil {
+				results[i].err = err
+				return
+			}
+			for _, item := range rss.Items {
+				if d, valid := dealNewsItem(item, feed.category); valid {
+					results[i].deals = append(results[i].deals, d)
+				}
+			}
+		}(i, feed)
+	}
+	wg.Wait()
+
+	// Merge in feed order so output stays deterministic regardless of which
+	// goroutine finished first. Tolerate per-feed failures as long as one feed
+	// succeeded; only surface an error if every feed failed.
 	var out []WebDeal
 	var lastErr error
 	ok := false
-
-	for _, feed := range dealNewsFeeds {
-		reqURL := fmt.Sprintf("https://www.dealnews.com/%s/?rss=1", feed.path)
-		rss, err := fetchRSS(reqURL)
-		if err != nil {
-			lastErr = err
+	for _, r := range results {
+		if r.err != nil {
+			lastErr = r.err
 			continue
 		}
 		ok = true
-		for _, item := range rss.Items {
-			if d, valid := dealNewsItem(item, feed.category); valid {
-				out = append(out, d)
-			}
-		}
+		out = append(out, r.deals...)
 	}
 
 	if !ok && lastErr != nil {

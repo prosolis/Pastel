@@ -13,24 +13,26 @@ func TestComputeVerdict(t *testing.T) {
 		salePrice   float64
 		low         float64
 		haveLow     bool
+		priorObs    int
 		itadHistLow bool
 		want        string
 	}{
-		{"itad hist low wins regardless", 50, 10, true, true, VerdictAllTimeLow},
-		{"no history yet", 20, 0, false, false, VerdictNone},
-		{"zero price no claim", 0, 10, true, false, VerdictNone},
-		{"equal to record low", 10, 10, true, false, VerdictAllTimeLow},
-		{"new record low below history", 8, 10, true, false, VerdictAllTimeLow},
-		{"within 10pct is good", 10.9, 10, true, false, VerdictGood},
-		{"at 10pct boundary is good", 11, 10, true, false, VerdictGood},
-		{"above 10pct is meh", 12, 10, true, false, VerdictMeh},
+		{"itad hist low wins regardless", 50, 10, true, 0, true, VerdictAllTimeLow},
+		{"no history yet", 20, 0, false, 0, false, VerdictNone},
+		{"zero price no claim", 0, 10, true, 5, false, VerdictNone},
+		{"equal to record low is not atl", 10, 10, true, 5, false, VerdictGood},
+		{"new low with enough history is atl", 8, 10, true, minObsForATL, false, VerdictAllTimeLow},
+		{"new low but too little history is good", 8, 10, true, minObsForATL - 1, false, VerdictGood},
+		{"within 10pct is good", 10.9, 10, true, 5, false, VerdictGood},
+		{"at 10pct boundary is good", 11, 10, true, 5, false, VerdictGood},
+		{"above 10pct is meh", 12, 10, true, 5, false, VerdictMeh},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ComputeVerdict(tc.salePrice, tc.low, tc.haveLow, tc.itadHistLow)
+			got := ComputeVerdict(tc.salePrice, tc.low, tc.haveLow, tc.priorObs, tc.itadHistLow)
 			if got != tc.want {
-				t.Errorf("ComputeVerdict(%v,%v,%v,%v) = %q, want %q",
-					tc.salePrice, tc.low, tc.haveLow, tc.itadHistLow, got, tc.want)
+				t.Errorf("ComputeVerdict(%v,%v,%v,%v,%v) = %q, want %q",
+					tc.salePrice, tc.low, tc.haveLow, tc.priorObs, tc.itadHistLow, got, tc.want)
 			}
 		})
 	}
@@ -96,10 +98,12 @@ func TestSaveDealWithVerdict_PriceJourney(t *testing.T) {
 		price       float64
 		wantVerdict string
 	}{
-		{30, VerdictNone},       // first sighting: no history → no claim
-		{35, VerdictMeh},        // pricier than the 30 we saw → meh
-		{32, VerdictGood},       // within 10% of 30 → good
-		{28, VerdictAllTimeLow}, // new record low → all-time-low
+		{30, VerdictNone}, // first sighting: no history → no claim
+		{35, VerdictMeh},  // pricier than the 30 we saw → meh
+		{32, VerdictGood}, // within 10% of 30, but only 2 distinct priors → good
+		// 4th sighting: strictly below the 30 low AND 3 distinct priors
+		// (30/35/32) clear minObsForATL → all-time-low.
+		{28, VerdictAllTimeLow},
 	}
 
 	for _, s := range steps {
@@ -112,7 +116,7 @@ func TestSaveDealWithVerdict_PriceJourney(t *testing.T) {
 		}
 	}
 
-	if low, ok := db.LowestPrice(PriceKey("tech", normalize.Text(title))); !ok || low != 28 {
+	if low, ok := db.LowestPrice(PriceKey("tech", "SomeShop", normalize.Text(title))); !ok || low != 28 {
 		t.Errorf("LowestPrice = %v (ok=%v), want 28", low, ok)
 	}
 }

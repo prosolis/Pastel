@@ -217,13 +217,12 @@ const CATEGORY_META = {
   clothing: { label: "Clothing", icon: "👕" },
   home: { label: "Home", icon: "🏠" },
   sports: { label: "Sports", icon: "🏃" },
-  // Phase 5 verticals (DealNews coverage expansion).
+  // Phase 5 verticals (DealNews coverage expansion). No pets/kids: DealNews has
+  // no such category, so they're not sourced (see dealNewsFeeds).
   tools: { label: "Tools", icon: "🔧" },
   beauty: { label: "Beauty", icon: "💄" },
   auto: { label: "Auto", icon: "🚗" },
-  kids: { label: "Kids", icon: "🧸" },
   office: { label: "Office", icon: "✏️" },
-  pets: { label: "Pets", icon: "🐾" },
   general: { label: "Random shit", icon: "🛍️" },
 };
 

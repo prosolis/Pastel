@@ -385,11 +385,20 @@ type Deal struct {
 // dedup_id is unsuitable because it embeds the discount/timestamp and so
 // changes whenever the price moves; the normalized title (plus category, to
 // avoid cross-category collisions) is stable across re-sees of the same item.
-func PriceKey(category, titleNorm string) string {
+//
+// For non-game categories the store is folded in too: retail/RSS titles are
+// generic ("usb cable", "wireless mouse") and two unrelated products that
+// normalize the same would otherwise share — and corrupt — one history key.
+// Games are excepted: the same title sells across many storefronts and pooling
+// those sightings gives a truer historical low, so games key on title alone.
+func PriceKey(category, store, titleNorm string) string {
 	if category == "" {
 		category = "games"
 	}
-	return category + "|" + titleNorm
+	if category == "games" {
+		return category + "|" + titleNorm
+	}
+	return category + "|" + normalize.Text(store) + "|" + titleNorm
 }
 
 // SaveDeal upserts a deal's full data. The first insert sets posted_at; later
@@ -466,6 +475,18 @@ func (d *DB) MedianPrice(priceKey string) (float64, bool) {
 		return prices[n/2], true
 	}
 	return (prices[n/2-1] + prices[n/2]) / 2, true
+}
+
+// DistinctPriceCount returns how many distinct sale prices have been observed for
+// a product key. The verdict logic gates the "all-time low" badge on this so a
+// product re-saved at one unchanging price (which inflates row count but not the
+// distinct count) can't accumulate enough "history" to look trustworthy.
+func (d *DB) DistinctPriceCount(priceKey string) int {
+	var n int
+	if err := d.db.Get(&n, "SELECT COUNT(DISTINCT sale_price) FROM price_history WHERE price_key = ?", priceKey); err != nil {
+		return 0
+	}
+	return n
 }
 
 // Deal pagination bounds. The web API clamps client-supplied page sizes to
@@ -588,12 +609,20 @@ func (d *DB) QueryDeals(f DealFilter) ([]Deal, int, error) {
 	// active (unexpired) watches count, matching who FindMatchingUsers would
 	// actually notify, so the displayed number doesn't include stale watches.
 	now := time.Now().UTC().Format(time.RFC3339)
-	query := "SELECT " + dealColumns + ", " +
-		"(SELECT COUNT(*) FROM watchlist w WHERE w.game_name_normalized = deals.title_normalized AND w.expires_at > ?) AS watcher_count " +
-		"FROM deals" + clause + order + " LIMIT ? OFFSET ?"
-	// The watcher_count subquery is in the SELECT list, so its placeholder comes
-	// before the WHERE-clause args; prepend now to a fresh slice (args is reused
-	// by the COUNT query above and must stay unchanged).
+	// watcher_count joins a single pre-aggregated count of active watches per
+	// normalized name rather than re-running a correlated subquery for every
+	// result row. The GROUP BY scans watchlist once (using idx_watchlist_normalized)
+	// instead of once per row, and COALESCE turns the no-watchers LEFT JOIN miss
+	// into 0.
+	query := "SELECT " + dealColumns + ", COALESCE(wc.n, 0) AS watcher_count " +
+		"FROM deals " +
+		"LEFT JOIN (SELECT game_name_normalized, COUNT(*) AS n FROM watchlist " +
+		"WHERE expires_at > ? GROUP BY game_name_normalized) wc " +
+		"ON wc.game_name_normalized = deals.title_normalized" +
+		clause + order + " LIMIT ? OFFSET ?"
+	// The joined subquery's placeholder comes before the WHERE-clause args; prepend
+	// now to a fresh slice (args is reused by the COUNT query above and must stay
+	// unchanged).
 	selArgs := append([]any{now}, args...)
 	selArgs = append(selArgs, limit, f.Offset)
 

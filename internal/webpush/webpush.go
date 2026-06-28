@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/hkdf"
@@ -49,12 +50,33 @@ type Subscription struct {
 	Auth     string
 }
 
+// vapidTTL is how long a signed VAPID JWT stays valid. vapidRenew is how much
+// lead time before expiry a cached token is re-signed, so an in-flight Send never
+// races the deadline.
+const (
+	vapidTTL   = 12 * time.Hour
+	vapidRenew = time.Hour
+)
+
+// cachedJWT is a signed VAPID token plus the instant it must be replaced.
+type cachedJWT struct {
+	auth  string // the full "vapid t=..., k=..." header value
+	renew time.Time
+}
+
 // Sender signs and encrypts Web Push messages with a fixed VAPID identity.
 type Sender struct {
 	priv    *ecdsa.PrivateKey // VAPID signing key (P-256)
 	pubB64  string            // VAPID public key, base64url uncompressed point
 	subject string            // VAPID "sub" contact, e.g. "mailto:admin@host"
 	client  *http.Client
+
+	// The VAPID JWT depends only on the push service's audience (endpoint origin)
+	// and is valid for vapidTTL, so it is memoized per audience instead of being
+	// re-signed on every Send — a user with several device subscriptions on one
+	// push service then shares a single signature.
+	mu       sync.Mutex
+	jwtCache map[string]cachedJWT
 }
 
 // GenerateVAPIDKeys returns a fresh VAPID keypair as base64url strings: the
@@ -96,10 +118,11 @@ func NewSender(privB64, subject string) (*Sender, error) {
 		subject = "mailto:admin@localhost"
 	}
 	return &Sender{
-		priv:    priv,
-		pubB64:  b64.EncodeToString(pub.Bytes()),
-		subject: subject,
-		client:  &http.Client{Timeout: 15 * time.Second},
+		priv:     priv,
+		pubB64:   b64.EncodeToString(pub.Bytes()),
+		subject:  subject,
+		client:   &http.Client{Timeout: 15 * time.Second},
+		jwtCache: make(map[string]cachedJWT),
 	}, nil
 }
 
@@ -154,18 +177,29 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte) (in
 func Gone(status int) bool { return status == http.StatusNotFound || status == http.StatusGone }
 
 // vapidAuth builds the "Authorization: vapid t=<jwt>, k=<pubkey>" header for the
-// push service that hosts endpoint (RFC 8292).
+// push service that hosts endpoint (RFC 8292). The header is memoized per
+// audience and only re-signed once it nears expiry.
 func (s *Sender) vapidAuth(endpoint string) (string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("webpush: bad endpoint %q", endpoint)
 	}
 	aud := u.Scheme + "://" + u.Host
-	jwt, err := s.signJWT(aud, time.Now().Add(12*time.Hour))
+
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.jwtCache[aud]; ok && now.Before(c.renew) {
+		return c.auth, nil
+	}
+
+	jwt, err := s.signJWT(aud, now.Add(vapidTTL))
 	if err != nil {
 		return "", err
 	}
-	return "vapid t=" + jwt + ", k=" + s.pubB64, nil
+	auth := "vapid t=" + jwt + ", k=" + s.pubB64
+	s.jwtCache[aud] = cachedJWT{auth: auth, renew: now.Add(vapidTTL - vapidRenew)}
+	return auth, nil
 }
 
 // signJWT produces a compact ES256 JWT with the VAPID claims (aud/exp/sub).
