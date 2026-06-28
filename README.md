@@ -20,9 +20,13 @@ CheapShark and IsThereAnyDeal can be used individually or together — configure
 2. Build and run with Go 1.25+:
 
 ```bash
-go build -tags goolm -o pastel ./cmd/pastel
+CGO_ENABLED=0 go build -tags goolm -ldflags="-s -w" -o pastel ./cmd/pastel
 ./pastel
 ```
+
+> ⚠️ **The `CGO_ENABLED=0 -tags goolm` flags are mandatory — do not drop either.**
+> See [Building from source](#building-from-source) for why; a plain `go build`
+> compiles but then **panics on startup**.
 
 Or run with Docker:
 
@@ -30,6 +34,50 @@ Or run with Docker:
 docker build -t pastel .
 docker run --env-file .env -v pastel-data:/data pastel
 ```
+
+## Building from source
+
+**The one and only correct build command:**
+
+```bash
+CGO_ENABLED=0 go build -tags goolm -ldflags="-s -w" -o pastel ./cmd/pastel
+```
+
+Both flags are **required**, and they are required *together*. This trips people
+up repeatedly, so here is the full reasoning — read it once and never guess again:
+
+| Flag | Why it's mandatory |
+|---|---|
+| `-tags goolm` | Selects mautrix's **pure-Go** Olm implementation. Without it, mautrix pulls in `crypto/libolm`, which needs cgo + a system libolm to link. |
+| `CGO_ENABLED=0` | Forces a pure-Go build (the project uses `modernc.org/sqlite`, no C sqlite). `goolm` makes this possible by removing the libolm cgo dependency. |
+
+**Why a plain `go build` builds fine but then crashes:** with cgo enabled (the Go
+default when a C toolchain is present), the cgo-gated file
+`go.mau.fi/util/dbutil/litestream/register.go` (`//go:build cgo`, pulled in
+transitively via mautrix's cryptohelper) compiles in and registers a database
+driver named **`sqlite3-fk-wal`** — the *same* name this project registers in
+[`internal/matrix/sqlitedriver.go`](internal/matrix/sqlitedriver.go). Two
+registrations of one driver name is a hard panic at process start:
+
+```
+panic: sql: Register called twice for driver sqlite3-fk-wal
+```
+
+Setting `CGO_ENABLED=0` excludes that `//go:build cgo` file, so only this
+project's registration runs. **That is the entire reason for the flags.** The
+binary builds either way — the failure only shows up at runtime, which is why
+it's so easy to ship a broken build.
+
+To confirm a binary was built correctly, read its embedded settings — they should
+show `-tags=goolm` and `CGO_ENABLED=0`:
+
+```bash
+go version -m ./pastel | grep -E 'tags|CGO'
+```
+
+The migrate tool ([Migrating from the Python Version](#migrating-from-the-python-version))
+does not import mautrix, so it doesn't need `-tags goolm`, but build it
+`CGO_ENABLED=0` too for the same pure-Go sqlite reason.
 
 ## Watchlist
 
@@ -189,8 +237,8 @@ All configuration is via environment variables (see `.env.example`):
 A service file is included for systemd deployments:
 
 ```bash
-# Build and install
-go build -tags goolm -o pastel ./cmd/pastel
+# Build and install (see "Building from source" — both flags are required)
+CGO_ENABLED=0 go build -tags goolm -ldflags="-s -w" -o pastel ./cmd/pastel
 sudo mkdir -p /opt/pastel
 sudo cp pastel /opt/pastel/
 sudo cp .env /opt/pastel/
@@ -264,8 +312,8 @@ Thread root messages are created automatically the first time a deal in that cat
 The Go version is compatible with the existing Python `deals.db`. A migration script is included to convert timestamp formats and create the new watchlist table:
 
 ```bash
-# Build the migration tool
-go build -o migrate ./cmd/migrate
+# Build the migration tool (no -tags goolm needed — migrate doesn't use mautrix)
+CGO_ENABLED=0 go build -o migrate ./cmd/migrate
 
 # Migrate (creates a .bak backup automatically)
 ./migrate deals.db
