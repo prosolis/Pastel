@@ -20,6 +20,15 @@ var dealNewsFeeds = []struct {
 	{"c1009/Home-Garden", "home"},
 	{"c211/Sports-Fitness", "sports"},
 	{"c178/Movies-Music-Books", "media"},
+	// Phase 5 coverage expansion — each is a distinct DealNews vertical (Slickdeals
+	// RSS, by contrast, ignores its category params and only serves the frontpage,
+	// so DealNews is the reliable way to add real verticals).
+	{"c238/Tools-Hardware", "tools"},
+	{"c196/Health-Beauty", "beauty"},
+	{"c184/Automotive", "auto"},
+	{"c181/Babies-Kids", "kids"},
+	{"c219/Office-School-Supplies", "office"},
+	{"c1136/Pet-Supplies", "pets"},
 }
 
 // DealNews descriptions carry a "Shop Now at <Store></p>" call to action, which

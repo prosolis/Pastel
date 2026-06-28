@@ -25,7 +25,7 @@ func newAuthedServer(t *testing.T, userID string) (*Server, *http.Cookie) {
 		t.Fatalf("create session: %v", err)
 	}
 	cfg := &config.Config{WebListenAddr: ":0"}
-	s := New(cfg, db, watchlist.NewStore(db.RawDB()))
+	s := New(cfg, db, watchlist.NewStore(db.RawDB()), nil)
 	return s, &http.Cookie{Name: sessionCookie, Value: "tok-123"}
 }
 
@@ -58,7 +58,7 @@ func TestMeWithExpiredSession(t *testing.T) {
 	if err := db.CreateSession("old", "@bob:example.com", "Bob", time.Now().Add(-time.Hour)); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	s := New(&config.Config{}, db, watchlist.NewStore(db.RawDB()))
+	s := New(&config.Config{}, db, watchlist.NewStore(db.RawDB()), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: "old"})

@@ -23,6 +23,7 @@ import (
 	"github.com/prosolis/Pastel/internal/preflight"
 	"github.com/prosolis/Pastel/internal/watchlist"
 	"github.com/prosolis/Pastel/internal/web"
+	"github.com/prosolis/Pastel/internal/webpush"
 )
 
 const (
@@ -320,7 +321,14 @@ func main() {
 	webCtx, webCancel := context.WithCancel(context.Background())
 	webDone := make(chan struct{})
 	if cfg.WebEnabled {
-		srv := web.New(cfg, db, watchStore)
+		// Web Push: load/generate the VAPID identity once. pushOut (consulted by
+		// notifyWatchlist) and the web server share the same sender.
+		pushOut = setupPush(db, cfg.VAPIDSubject)
+		var pushSender *webpush.Sender
+		if pushOut != nil {
+			pushSender = pushOut.sender
+		}
+		srv := web.New(cfg, db, watchStore, pushSender)
 		go func() {
 			defer close(webDone)
 			if err := srv.Run(webCtx); err != nil {
@@ -395,6 +403,19 @@ func notifyWatchlist(ws *watchlist.Store, mx *matrix.Client, d watchlist.MatchDe
 		if !ok {
 			mode, _ = ws.NotifyMode(m.UserID)
 			modes[m.UserID] = mode
+		}
+		// Web Push is a separate, instant channel: if the user subscribed a browser
+		// it fires on every match regardless of their Matrix notify mode (a digest
+		// user may still want the browser ping). No-op when push is disabled or the
+		// user has no subscription.
+		if pushOut != nil {
+			body := "Matches your watch: " + m.GameName
+			if d.IsFree {
+				body = "Free · " + body
+			} else if price != "" {
+				body = price + " · " + body
+			}
+			pushOut.notify(m.UserID, d.Title, body, url)
 		}
 		if mode == "daily" {
 			if err := ws.QueueDigest(m.UserID, m.GameName, d, url, price); err != nil {

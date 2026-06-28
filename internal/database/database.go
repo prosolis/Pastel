@@ -204,6 +204,20 @@ func (d *DB) migrate() error {
 			expires_at   TIMESTAMP NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
+
+		-- push_subscriptions backs Phase 5 Web Push: each row is a browser
+		-- PushSubscription owned by user_id (the Matrix mxid, the same key the
+		-- watchlist uses), so a watch match can be delivered to the browser without
+		-- a Matrix DM. endpoint is the push service URL and the natural primary key;
+		-- p256dh/auth are the subscription's encryption keys (base64url).
+		CREATE TABLE IF NOT EXISTS push_subscriptions (
+			endpoint   TEXT PRIMARY KEY,
+			user_id    TEXT NOT NULL,
+			p256dh     TEXT NOT NULL,
+			auth       TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 	`)
 	if err != nil {
 		return err

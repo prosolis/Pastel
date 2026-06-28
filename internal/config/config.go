@@ -31,6 +31,10 @@ type Config struct {
 	OIDCIssuerURL    string
 	OIDCClientID     string
 	OIDCClientSecret string
+
+	// VAPIDSubject is the contact URI (mailto: or https:) embedded in the VAPID
+	// JWT for Web Push (RFC 8292). Defaults to mailto:pastel@<server name>.
+	VAPIDSubject string
 }
 
 func Load() (*Config, error) {
@@ -90,6 +94,7 @@ func Load() (*Config, error) {
 	c.OIDCIssuerURL = os.Getenv("OIDC_ISSUER_URL")
 	c.OIDCClientID = os.Getenv("OIDC_CLIENT_ID")
 	c.OIDCClientSecret = os.Getenv("OIDC_CLIENT_SECRET")
+	c.VAPIDSubject = envStr("VAPID_SUBJECT", "mailto:pastel@"+c.MatrixServerName)
 
 	return c, nil
 }

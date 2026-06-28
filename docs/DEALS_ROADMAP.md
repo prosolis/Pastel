@@ -19,7 +19,7 @@ phases are tightened immediately before their build.
 | 2 | Watchlist 2.0 | ✅ Done — 2026-06-28 (`49b6daf`) |
 | 3 | Community layer | ✅ Done — 2026-06-28 |
 | 4 | Deal images | ✅ Done — 2026-06-28 |
-| 5 | Coverage & reach | ⬜ Next — free super-tab, new sources, PWA |
+| 5 | Coverage & reach | ✅ Done — 2026-06-28 (free super-tab, DealNews verticals, PWA + Web Push) |
 
 Branch: `feat/price-verdicts`.
 
@@ -213,21 +213,60 @@ source to the card and degrades to a plain text-only card where there isn't one.
 local image render as rounded 16:9 thumbnails, an image-less deal stays text-only,
 and a deliberately-broken URL self-removes via `onerror` (no broken icon).
 
-## Phase 5 — Coverage & reach  ⬜ *(tighten before build)*
+## Phase 5 — Coverage & reach  ✅
 
 **Goal:** More of what Parodia actually buys, plus app-like delivery.
 
-- **Free-stuff super-tab.** Tag free items so the data-driven nav renders a
-  `🎁 Free` pill aggregating Epic + future GOG/Prime/Steam free weekends.
-- **New sources** following the RSS pattern (`FetchXxx() ([]WebDeal, error)` →
-  register in `DEAL_SOURCES` → call from `checkWebDeals`): prioritize
-  `/r/buildapcsales`, Humble, GOG, Woot. Amazon needs a Keepa-style price source —
-  defer/scope separately.
-- **PWA + Web Push.** Manifest + service worker in the embedded static set; use
-  the price-verdict + watchlist signals to push "all-time low on your watch"
-  without a Matrix DM. Largest net-new infra — scope as its own sub-phase.
-- **Verify:** each source behind its `DEAL_SOURCES` flag with a fetch smoke test;
-  PWA installability via devtools.
+### Built (2026-06-28)
+
+- **🎁 Free super-tab.** A synthetic catnav selection (`FREE_TAB` sentinel in
+  `app.js`) that cross-cuts every vertical: it maps to `free=1` (no category)
+  instead of a real category, reusing the existing `is_free` column + `FreeOnly`
+  filter. Rendered up front with a minty accent (`.free-pill`); the sidebar "Free
+  only" checkbox remains an independent route to the same param. No backend change
+  — the filter already existed from Phase 1/2.
+- **New sources — DealNews verticals, *not* Slickdeals.** Probing showed
+  Slickdeals's RSS **ignores** its category params (`fcid`/`forumid` all return the
+  same frontpage), and Woot/GOG/Humble no longer expose usable RSS. DealNews
+  category feeds *are* cleanly segmented, so coverage was expanded by adding six
+  feeds to `dealNewsFeeds` (Tools-Hardware→`tools`, Health-Beauty→`beauty`,
+  Automotive→`auto`, Babies-Kids→`kids`, Office-School-Supplies→`office`,
+  Pet-Supplies→`pets`). New verticals appear in the data-driven catnav
+  automatically; `CATEGORY_META` got icons/labels for each. **Reddit was
+  explicitly dropped** (datacenter-IP throttling + would need an Atom parser).
+- **PWA.** `manifest.webmanifest` (standalone, theme `#ffe1f1`, maskable + any
+  icons generated from the mascot at 192/512), `sw.js` service worker (app-shell
+  precache + stale-while-revalidate for static, network-first navigations, never
+  caches `/api/` or `/auth/`), linked from `index.html` and registered in
+  `app.js`. `.webmanifest` MIME registered in `web` `init()`.
+- **Web Push (RFC 8291 + VAPID, in-repo, zero new deps).** `internal/webpush`
+  implements VAPID ES256 JWTs and `aes128gcm` message encryption using only
+  stdlib `crypto/ecdh`/`ecdsa` + `x/crypto/hkdf` (already in the module graph) —
+  no third-party push library. The VAPID keypair is generated once and persisted
+  in `config` (`vapid_private_key`). Subscriptions live in a new
+  `push_subscriptions(endpoint PK, user_id, p256dh, auth)` table keyed by the
+  Matrix mxid — the *same* id the watchlist and `FindMatchingUsers` use, so a
+  watch match maps straight to a browser. API: `GET /api/push/config` (public
+  VAPID key), auth-gated `POST /api/push/{subscribe,unsubscribe}`. Delivery hooks
+  into `notifyWatchlist` (the single choke point all match sites flow through) via
+  a process-wide `pushOut`; it fires on every match independent of Matrix notify
+  mode, and prunes endpoints the push service reports Gone (404/410). Frontend
+  toggle (🔔) in the watchlist drawer, shown only when signed in + push supported.
+- **Tests:** `webpush_test.go` — RFC 8291 round-trip via an *independently-coded*
+  receiver-side decrypt (catches any key-schedule/info-string/header divergence),
+  auth-secret-is-bound negative test, VAPID JWT sign+verify, and an httptest Send
+  asserting the posted body decrypts. The existing-DB migration guard now also
+  exercises `push_subscriptions` (save/list/delete) on a pre-Phase-5 database.
+
+**Verified:** rendered a seeded gallery — the 🎁 Free pill + all six new vertical
+pills render with their icons, `free=1` returns only free items across categories,
+and the manifest/`sw.js`/icons all serve (manifest as `application/manifest+json`)
+with the service worker registering and no console errors.
+
+**Not done in-session (needs real infra, like prior phases' smoke tests):** an
+end-to-end push delivery through a live browser push service (FCM/Mozilla) and the
+install-prompt — both require a real browser over HTTPS at deploy. The crypto is
+unit-validated; interop is the deploy check.
 
 ---
 
@@ -237,6 +276,7 @@ and a deliberately-broken URL self-removes via `onerror` (no broken icon).
 2. ✅ Phase 2 — implemented, tested, committed.
 3. ✅ Phase 3 — implemented & tested; live Matrix smoke test on next deploy.
 4. ✅ Phase 4 (images) — per-source extraction + lazy card thumbnails, verified.
-5. Phase 5 — sources incrementally; PWA as its own sub-phase.
+5. ✅ Phase 5 — free super-tab + DealNews verticals + PWA + in-repo Web Push;
+   verified locally, live push delivery deferred to deploy.
 
 Each phase is independently shippable and leaves the service working.

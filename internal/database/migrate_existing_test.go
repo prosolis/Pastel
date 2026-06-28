@@ -69,6 +69,19 @@ func TestMigrateAddsCategoryToExistingDB(t *testing.T) {
 		t.Fatalf("image_url = %q after migrate, want empty", img)
 	}
 
+	// Phase 5 (Web Push): the push_subscriptions table is created on a pre-existing
+	// DB and is immediately usable — upsert a row, read it back, then delete it.
+	if err := db.SavePushSub("@u:x", "https://push.example/abc", "p256", "auth"); err != nil {
+		t.Fatalf("save push sub after migrate: %v", err)
+	}
+	subs, err := db.ListPushSubs("@u:x")
+	if err != nil || len(subs) != 1 || subs[0].Endpoint != "https://push.example/abc" {
+		t.Fatalf("list push subs after migrate: subs=%+v err=%v", subs, err)
+	}
+	if removed, err := db.DeletePushSub("@u:x", "https://push.example/abc"); err != nil || !removed {
+		t.Fatalf("delete push sub after migrate: removed=%v err=%v", removed, err)
+	}
+
 	// Idempotent: a second Open must not error.
 	db.Close()
 	db2, err := Open(path)

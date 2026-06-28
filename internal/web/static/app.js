@@ -217,8 +217,20 @@ const CATEGORY_META = {
   clothing: { label: "Clothing", icon: "👕" },
   home: { label: "Home", icon: "🏠" },
   sports: { label: "Sports", icon: "🏃" },
+  // Phase 5 verticals (DealNews coverage expansion).
+  tools: { label: "Tools", icon: "🔧" },
+  beauty: { label: "Beauty", icon: "💄" },
+  auto: { label: "Auto", icon: "🚗" },
+  kids: { label: "Kids", icon: "🧸" },
+  office: { label: "Office", icon: "✏️" },
+  pets: { label: "Pets", icon: "🐾" },
   general: { label: "Random shit", icon: "🛍️" },
 };
+
+// FREE_TAB is a synthetic catnav selection: not a real category, it cross-cuts
+// every vertical to show only free items (free=1). Sentinel kept distinct from
+// any real category value so currentParams can special-case it.
+const FREE_TAB = "__free__";
 function catMeta(c) {
   return CATEGORY_META[c] || { label: c.charAt(0).toUpperCase() + c.slice(1), icon: "🏷️" };
 }
@@ -227,6 +239,11 @@ function catMeta(c) {
 // cards can render the right toggle and remove entries without a round-trip.
 let me = { authenticated: false, oidcEnabled: false };
 const watched = new Map();
+
+// Web Push state (Phase 5): whether the server offers push and, if so, the VAPID
+// application server key the browser subscribes with.
+let pushEnabled = false;
+let pushPublicKey = "";
 
 const $ = (id) => document.getElementById(id);
 const grid = $("grid");
@@ -247,13 +264,16 @@ function currentParams() {
   const p = new URLSearchParams();
   const q = $("q").value.trim();
   if (q) p.set("q", q);
-  if (activeCategory) p.set("category", activeCategory);
+  // The Free super-tab is a cross-category free=1 filter, not a real category, so
+  // it sets free instead of category. The sidebar "Free only" checkbox is an
+  // independent route to the same param (both just produce free=1).
+  if (activeCategory && activeCategory !== FREE_TAB) p.set("category", activeCategory);
+  if (activeCategory === FREE_TAB || $("free").checked) p.set("free", "1");
   if ($("source").value) p.set("source", $("source").value);
   if ($("store").value) p.set("store", $("store").value);
   if ($("min_discount").value) p.set("min_discount", $("min_discount").value);
   if ($("max_price").value) p.set("max_price", $("max_price").value);
   if ($("hist_low").checked) p.set("hist_low", "1");
-  if ($("free").checked) p.set("free", "1");
   if ($("great").checked) p.set("great", "1");
   p.set("sort", $("sort").value);
   p.set("limit", PAGE_SIZE);
@@ -494,12 +514,15 @@ function buildCatNav(categories) {
   const nav = $("catnav");
   if (!nav) return;
   nav.innerHTML = "";
-  const cats = ["", ...(categories || [])]; // "" = All
+  // "" = All, FREE_TAB = the cross-category 🎁 Free super-tab, then the live
+  // verticals. Free sits up front so it reads as a headline destination.
+  const cats = ["", FREE_TAB, ...(categories || [])];
   for (const c of cats) {
     const btn = document.createElement("button");
     btn.className = "cat-pill" + (c === activeCategory ? " active" : "");
+    if (c === FREE_TAB) btn.classList.add("free-pill");
     btn.dataset.cat = c;
-    btn.textContent = c === "" ? "✨ All" : `${catMeta(c).icon} ${catMeta(c).label}`;
+    btn.textContent = c === "" ? "✨ All" : c === FREE_TAB ? "🎁 Free" : `${catMeta(c).icon} ${catMeta(c).label}`;
     btn.addEventListener("click", () => selectCategory(c));
     nav.appendChild(btn);
   }
@@ -549,8 +572,124 @@ async function loadMe() {
         el.append(a);
       }
     }
+    refreshPushToggle();
   } catch (err) {
     console.error("failed to load me", err);
+  }
+}
+
+/* ============================================================================
+   Web Push (Phase 5) — opt-in browser alerts for watched deals.
+   ============================================================================ */
+
+// urlBase64ToUint8Array converts the server's base64url VAPID key into the
+// Uint8Array that pushManager.subscribe() requires as applicationServerKey.
+function urlBase64ToUint8Array(b64) {
+  const padding = "=".repeat((4 - (b64.length % 4)) % 4);
+  const base64 = (b64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+// registerServiceWorker installs sw.js, which powers offline shell caching and
+// receives push messages. Harmless where service workers aren't supported.
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    await navigator.serviceWorker.register("/sw.js");
+  } catch (err) {
+    console.error("service worker registration failed", err);
+  }
+}
+
+async function loadPushConfig() {
+  try {
+    const res = await fetch("/api/push/config");
+    const data = await res.json();
+    pushEnabled = !!data.enabled;
+    pushPublicKey = data.publicKey || "";
+  } catch (err) {
+    pushEnabled = false;
+  }
+}
+
+// pushSupported gates the toggle on the server offering push AND the browser
+// having the APIs (PushManager/Notification/service workers).
+function pushSupported() {
+  return (
+    pushEnabled &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window
+  );
+}
+
+async function currentSubscription() {
+  if (!("serviceWorker" in navigator)) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+// refreshPushToggle shows the alerts button only when usable, and labels it to
+// reflect whether this browser is currently subscribed.
+async function refreshPushToggle() {
+  const btn = $("push-toggle");
+  if (!btn) return;
+  if (!me.authenticated || !pushSupported()) {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  let sub = null;
+  try {
+    sub = await currentSubscription();
+  } catch (err) {
+    /* ignore */
+  }
+  btn.classList.toggle("on", !!sub);
+  btn.textContent = sub ? "🔔 Deal alerts on" : "🔕 Enable deal alerts";
+}
+
+async function togglePush() {
+  const btn = $("push-toggle");
+  btn.disabled = true;
+  try {
+    const existing = await currentSubscription();
+    if (existing) {
+      // Unsubscribe: tell the server first, then drop the browser subscription.
+      await fetch("/api/push/unsubscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: existing.endpoint }),
+      });
+      await existing.unsubscribe();
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") return;
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(pushPublicKey),
+      });
+      const json = sub.toJSON();
+      const res = await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+      });
+      if (!res.ok) {
+        await sub.unsubscribe();
+        throw new Error("subscribe failed: " + res.status);
+      }
+      boingMascot();
+    }
+  } catch (err) {
+    console.error("toggle push failed", err);
+  } finally {
+    btn.disabled = false;
+    refreshPushToggle();
   }
 }
 
@@ -667,7 +806,13 @@ function init() {
   const mascot = $("mascot");
   if (mascot) mascot.addEventListener("click", boingMascot);
 
+  const pushBtn = $("push-toggle");
+  if (pushBtn) pushBtn.addEventListener("click", togglePush);
+
   startBackground();
+  registerServiceWorker();
+  // Learn whether push is offered, then (re)evaluate the toggle once auth loads.
+  loadPushConfig().then(refreshPushToggle);
   loadMe();
   loadFacets();
   loadDeals(true);
