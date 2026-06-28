@@ -228,12 +228,21 @@ and a deliberately-broken URL self-removes via `onerror` (no broken icon).
 - **New sources — DealNews verticals, *not* Slickdeals.** Probing showed
   Slickdeals's RSS **ignores** its category params (`fcid`/`forumid` all return the
   same frontpage), and Woot/GOG/Humble no longer expose usable RSS. DealNews
-  category feeds *are* cleanly segmented, so coverage was expanded by adding six
-  feeds to `dealNewsFeeds` (Tools-Hardware→`tools`, Health-Beauty→`beauty`,
-  Automotive→`auto`, Babies-Kids→`kids`, Office-School-Supplies→`office`,
-  Pet-Supplies→`pets`). New verticals appear in the data-driven catnav
-  automatically; `CATEGORY_META` got icons/labels for each. **Reddit was
-  explicitly dropped** (datacenter-IP throttling + would need an Atom parser).
+  category feeds *are* cleanly segmented, so coverage was expanded with extra
+  feeds in `dealNewsFeeds` (Tools-Hardware→`tools`, Health-Beauty→`beauty`,
+  Automotive→`auto`, Office-School-Supplies→`office`). New verticals appear in the
+  data-driven catnav automatically; `CATEGORY_META` got icons/labels for each.
+  **Reddit was explicitly dropped** (datacenter-IP throttling + would need an Atom
+  parser).
+  - **Gotcha (fixed in follow-up):** DealNews resolves a feed *only* by its numeric
+    `c<NN>` id and ignores the name in the path — a wrong number silently 301s to a
+    different category. The Phase-5 verticals were first added with guessed ids that
+    all resolved wrong (`c1136`=Generators not pets, `c238`=Automotive not tools,
+    `c184`=Office not auto, `c181`=Music not kids, `c219`=Flowers not office,
+    `c196`=Home-Garden not beauty). Corrected to verified top-level ids: tools=`c197`,
+    beauty=`c756`, auto=`c238`, office=`c182`; tech/home repointed off narrow leaves
+    to `c39`/`c196`. **DealNews has no pet or baby/kids category at all**, so `pets`
+    and `kids` were dropped (their catnav tabs fade as existing deals expire).
 - **PWA.** `manifest.webmanifest` (standalone, theme `#ffe1f1`, maskable + any
   icons generated from the mascot at 192/512), `sw.js` service worker (app-shell
   precache + stale-while-revalidate for static, network-first navigations, never
@@ -287,30 +296,32 @@ Each phase is independently shippable and leaves the service working.
 
 Surfaced by the `feat/price-verdicts` code review. The correctness/observability
 bugs found alongside these were fixed in that branch; the items below were left
-open because they need a design decision or are best-effort by nature.
+open because they needed a design decision or are best-effort by nature. Most
+were resolved in a later follow-up pass — status is noted inline.
 
-### 1. Price verdict badge is near-universal (`internal/database/verdict.go`)
+### 1. Price verdict badge is near-universal (`internal/database/verdict.go`) — ✅ fixed
 
-`SaveDealWithVerdict` records the current price into `price_history` *after*
+`SaveDealWithVerdict` recorded the current price into `price_history` *after*
 computing the verdict against prior history. So on a deal's **second** fetch
-cycle at an unchanged price, `LowestPrice` already returns that same price and
-`salePrice <= low*atlSlack` is true → it earns `all-time-low`. Since
+cycle at an unchanged price, `LowestPrice` already returned that same price and
+`salePrice <= low*atlSlack` was true → it earned `all-time-low`. Since
 CheapShark/ITAD re-save every still-live deal every couple of hours, virtually
-any deal that survives one cycle at a stable price shows the 🔥 badge, which
-guts the trust signal. The doc comment claims only "a genuine new low" reads as
-ATL, but the code also fires on equal-to-prior.
+any deal that survived one cycle at a stable price showed the 🔥 badge, which
+gutted the trust signal.
 
 **Compounded by** `PriceKey(category, titleNorm)` having no per-product id: two
-unrelated RSS items whose titles normalize the same (e.g. "usb cable") share one
-history key, so one can inherit the other's "all-time low" / median.
+unrelated RSS items whose titles normalized the same (e.g. "usb cable") shared
+one history key, so one could inherit the other's "all-time low" / median.
 
-**Fix direction (needs a decision):** require the current price to be a genuine
-new low (strictly below prior), and/or a minimum number of *distinct* prior
-observations before making any claim; for RSS, fold a stabler identifier (store +
-title, or the outbound product URL) into the price key. Not auto-fixed because it
-changes the badge's intended semantics.
+**Resolved:** `ComputeVerdict` now awards ATL only when the price is *strictly*
+below the prior low **and** at least `minObsForATL` (3) distinct prior prices
+have been observed (`DistinctPriceCount`); a genuine new low on a thinly-observed
+product reads as "good" until its history fills in. `atlSlack` is gone. `PriceKey`
+now folds the (normalized) store into the key for non-game categories, so generic
+retail/RSS titles no longer collide; games still key on title alone so their
+cross-store sightings stay pooled.
 
-### 2. Best-effort price parsing (`internal/deals/rss.go` — `parsePrice`)
+### 2. Best-effort price parsing (`internal/deals/rss.go` — `parsePrice`) — open (deferred)
 
 `parsePrice` returns the **first** currency token in the text, so marketing copy
 like "$5 off $50 orders" is read as a $5 product price (and feeds that into
@@ -320,17 +331,20 @@ RSS has no structured price field — and tightening the heuristic risks
 regressing the common US-dollar case, so it was left as-is. Revisit if/when a
 non-USD feed is added or price-history corruption is observed in prod.
 
-### 3. Efficiency (noted, not changed)
+### 3. Efficiency — ✅ fixed
 
-Low-urgency because they sit on background/ticker paths, not request hot paths:
+Low-urgency because they sit on background/ticker paths, not request hot paths,
+but all three were addressed:
 
-- **DealNews fetches its ~13 vertical feeds sequentially** (`dealnews.go`). Worst
-  case a scan blocks for `13 × (timeout + retries)`. Could fan out with bounded
-  concurrency and merge.
-- **VAPID JWT re-signed on every `Send`** (`webpush.go`). The JWT is valid 12h and
-  varies only by audience (endpoint origin); a user with several device
-  subscriptions on the same push service re-signs an identical token each time.
-  Could memoize per audience with its expiry.
-- **`watcher_count` correlated subquery runs per result row** in `QueryDeals`
-  (up to 200 scans of `watchlist` per page). An index on
-  `watchlist.game_name_normalized` or a single `GROUP BY` join would remove it.
+- **DealNews fetched its ~13 vertical feeds sequentially** (`dealnews.go`).
+  `FetchDealNewsDeals` now fans the feeds out with a bounded worker pool
+  (`dealNewsConcurrency = 5`) and merges results in feed order, collapsing the
+  worst case from the sum of every feed's timeout/retries to roughly one feed's.
+- **VAPID JWT re-signed on every `Send`** (`webpush.go`). The token is now
+  memoized per audience on the `Sender` (`jwtCache`, guarded by a mutex) and
+  re-signed only within `vapidRenew` of its `vapidTTL` expiry, so several device
+  subscriptions on one push service share a single signature.
+- **`watcher_count` correlated subquery ran per result row** in `QueryDeals`.
+  Replaced with a single `LEFT JOIN` against a `GROUP BY game_name_normalized`
+  aggregate of active watches, so the `watchlist` scan happens once per page
+  (using `idx_watchlist_normalized`) instead of once per row.
