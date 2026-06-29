@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/crypto/cryptohelper"
 	"maunium.net/go/mautrix/event"
@@ -135,7 +136,17 @@ func New(cfg ClientConfig) (*Client, error) {
 
 	// Set up E2EE
 	if cfg.CryptoDBPath != "" {
-		ch, err := cryptohelper.NewCryptoHelper(c.client, []byte("pastel_pickle_key"), cfg.CryptoDBPath)
+		// Build the crypto DB on our own cgo-free modernc driver rather than
+		// passing the path string to NewCryptoHelper: the string branch opens
+		// it with the cgo "sqlite3-fk-wal" driver registered by cryptohelper's
+		// litestream import. We replicate that branch's URI exactly so the
+		// existing crypto.db opens identically. See sqlitedriver.go.
+		cryptoDB, err := dbutil.NewWithDialect(
+			fmt.Sprintf("file:%s?_txlock=immediate", cfg.CryptoDBPath), cryptoDriverName)
+		if err != nil {
+			return nil, fmt.Errorf("open crypto db: %w", err)
+		}
+		ch, err := cryptohelper.NewCryptoHelper(c.client, []byte("pastel_pickle_key"), cryptoDB)
 		if err != nil {
 			return nil, fmt.Errorf("init crypto helper: %w", err)
 		}
