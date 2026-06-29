@@ -139,7 +139,14 @@ func fetchCheapSharkPage(reqURL string) ([]CheapSharkDeal, error) {
 			SteamAppID:  d.SteamAppID,
 			DealURL:     fmt.Sprintf("https://www.cheapshark.com/redirect?dealID=%s", d.DealID),
 			ImageURL:    d.Thumb,
-			DedupID:     fmt.Sprintf("cheapshark-%s-%d", d.GameID, d.LastChange),
+			// Key on game + store + discount, NOT LastChange. CheapShark bumps
+			// lastChange almost every poll even when price/discount are unchanged,
+			// so embedding it minted a fresh dedup_id (and a duplicate row) every
+			// cycle. This stable identity lets ON CONFLICT(dedup_id) update the
+			// existing row in place, and only forks a new row when the discount
+			// tier actually moves — matching ITAD's id scheme and the price-history
+			// design (see database.PriceKey).
+			DedupID: fmt.Sprintf("cheapshark-%s-%s-%d", d.GameID, d.StoreID, int(math.Floor(savings))),
 		})
 	}
 

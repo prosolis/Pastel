@@ -6,6 +6,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/joho/godotenv v1.5.1
+	go.mau.fi/util v0.9.6
 	golang.org/x/crypto v0.48.0
 	golang.org/x/oauth2 v0.36.0
 	maunium.net/go/mautrix v0.26.3
@@ -28,7 +29,6 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	go.mau.fi/util v0.9.6 // indirect
 	golang.org/x/exp v0.0.0-20260212183809-81e46e3db34a // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
